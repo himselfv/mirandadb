@@ -6,6 +6,9 @@ import struct
 
 # Miranda dbx_mmap database reader
 
+log = logging.getLogger('miranda-dbx_mmap')
+logging.basicConfig(level=logging.DEBUG, format='%(levelname)-8s %(message)s')
+
 """
 See:
   plugins\Db3x_mmap_origin\src\database.h
@@ -30,11 +33,15 @@ DBHeader
 \-->first module name (DBModuleName)
 \-->next module name (DBModuleName)
 \--> ...
-
 """
 
-log = logging.getLogger('miranda-dbx_mmap')
-logging.basicConfig(level=logging.DEBUG, format='%(levelname)-8s %(message)s')
+# Inherit and override unpack() or read()
+class DBStruct(object):
+	def read(self, file):
+		# struct.* only reads from buffer so need to read bytes
+		buffer = file.read(struct.calcsize(self.FORMAT))
+		tuple = struct.unpack(self.FORMAT, buffer)
+		self.unpack(tuple)
 
 
 """
@@ -51,7 +58,7 @@ DWORD ofsFirstContact;  // offset to first DBContact in the chain
 DWORD ofsUser;          // offset to DBContact representing the user
 DWORD ofsModuleNames;   // offset to first struct DBModuleName in the chain
 """
-class DbHeader:
+class DBHeader(DBStruct):
 	FORMAT = '16sIIIIIII'
 	def unpack(self, tuple):
 		(self.signature,
@@ -79,7 +86,7 @@ DWORD ofsFirstUnread;   // offset to the first (chronological) unread event	in t
 DWORD tsFirstUnread;    // timestamp of the event at ofsFirstUnread
 DWORD dwContactID;
 """
-class DbContact:
+class DBContact(DBStruct):
 	FORMAT = "IIIIIIIII"
 	def unpack(self, tuple):
 		(self.signature,
@@ -92,45 +99,147 @@ class DbContact:
 		self.tsFirstUnread,
 		self.dwContactID
 		) = tuple
+
+"""
+#define DBMODULENAME_SIGNATURE  0x4DDECADEu
+DWORD signature;
+DWORD ofsNext;          // offset to the next module name in the chain
+BYTE cbName;            // number of characters in this module name
+char name[1];           // name, no nul terminator
+"""
+class DBModuleName(DBStruct):
+	FORMAT = "IIB"
+	def read(self, file):
+		# read the static part
+		super(DBModuleName, self).read(file)
+		# read the dynamic part
+		self.name = file.read(self.cbName).decode('ascii')
+	def unpack(self, tuple):
+		(self.signature,
+		self.ofsNext,
+		self.cbName
+		) = tuple
+
+"""
+#define DBCONTACTSETTINGS_SIGNATURE  0x53DECADEu
+DWORD signature;
+DWORD ofsNext;          // offset to the next contactsettings in the chain
+DWORD ofsModuleName;   // offset to the DBModuleName of the owner of these settings
+DWORD cbBlob;           // size of the blob in bytes. May be larger than the
+// actual size for reducing the number of moves
+// required using granularity in resizing
+BYTE blob[1];           // the blob. a back-to-back sequence of DBSetting
+// structs, the last has cbName = 0
+"""
+class DBContactSettings(DBStruct):
+	FORMAT = "IIII"
+	def read(self, file):
+		# read the static part
+		super(DBContactSettings, self).read(file)
+		# read the dynamic part
+		self.blob = file.read(self.cbBlob)
 	
+	def unpack(self, tuple):
+		(self.signature,
+		self.ofsNext,
+		self.ofsModuleName,
+		self.cbBlob
+		) = tuple
+
+"""
+#define DBEVENT_SIGNATURE  0x45DECADEu
+DWORD signature;
+MCONTACT contactID;     // a contact this event belongs to
+DWORD ofsPrev, ofsNext;	// offset to the previous and next events in the
+// chain. Chain is sorted chronologically
+DWORD ofsModuleName;	   // offset to a DBModuleName struct of the name of
+// the owner of this event
+DWORD timestamp;        // seconds since 00:00:00 01/01/1970
+DWORD flags;            // see m_database.h, db/event/add
+WORD  wEventType;       // module-defined event type
+DWORD cbBlob;           // number of bytes in the blob
+BYTE  blob[1];          // the blob. module-defined formatting
+"""
+class DBEvent(DBStruct):
+	FORMAT = "IIIIIIIHI"
+	def read(self, file):
+		# read the static part
+		super(DBEvent, self).read(file)
+		# read the dynamic part
+		self.blob = file.read(self.cbBlob)
+	
+	def unpack(self, tuple):
+		(self.signature,
+		self.contactID,
+		self.ofsPrev,
+		self.ofsNext,
+		self.ofsModuleName,
+		self.timestamp,
+		self.flags,
+		self.wEventType,
+		self.cbBlob
+		) = tuple
+
 
 class MirandaDbxMmap:
 	file = None
 	
 	def __init__(self, filename):
 		self.file = open(filename, "rb")
-		self.header = self.read(DbHeader())
-		self.user = self.read(DbContact(), self.header.ofsUser)
-		self.dump_contacts()
+		self.header = self.read(DBHeader())
+		self.user = self.read(DBContact(), self.header.ofsUser)
 
 	# Reads and unpacks data at a given offset or where the pointer is now
 	# cl must provide cl.FORMAT and cl.unpack()
 	def read(self, cl, offset = None):
 		if offset <> None:
 			self.file.seek(offset, 0)
-		# struct.* only reads from buffer so need to read bytes
-		buffer = self.file.read(struct.calcsize(cl.FORMAT))
-		tuple = struct.unpack(cl.FORMAT, buffer)
-		cl.unpack(tuple)
-		log.info(vars(cl))
+		cl.read(self.file)
+		log.debug(vars(cl))
 		return cl
-	
-	def dump_contacts(self):
-		contactOffset = self.header.ofsFirstContact
-		totalEvents = 0
-		while contactOffset <> 0:
-			contact = self.read(DbContact(), contactOffset)
-			totalEvents += contact.eventCount
-			contactOffset = contact.ofsNext
-		print totalEvents
+
 
 # Can be called manually for testing
 def main():
 	parser = argparse.ArgumentParser(description="Parse and print Miranda.")
 	parser.add_argument("dbname", help='path to database file')
+	parser.add_argument("--dump-contacts", help='prints all contacts', action='store_true')
+	parser.add_argument("--dump-modules", help='prints all modules', action='store_true')
+	parser.add_argument("--dump-settings", help='prints all settings for the given contact', action='append', nargs=1)
 	args = parser.parse_args()
 	
 	db = MirandaDbxMmap(args.dbname)
+	
+	if args.dump_contacts:
+		dump_contacts(db)
+	
+	if args.dump_modules:
+		dump_modules(db)
+	
+	if args.dump_settings:
+		dump_settings(db, args.dump_settings)
+
+def dump_contacts(db):
+	contactOffset = db.header.ofsFirstContact
+	totalEvents = 0
+	while contactOffset <> 0:
+		contact = db.read(DBContact(), contactOffset)
+		totalEvents += contact.eventCount
+		contactOffset = contact.ofsNext
+	print totalEvents
+
+def dump_modules(db):
+	moduleOffset = db.header.ofsModuleNames
+	totalModules = 0
+	while moduleOffset <> 0:
+		module = db.read(DBModuleName(), moduleOffset)
+		print "Module: "+module.name
+		totalModules += 1
+		moduleOffset = module.ofsNext
+
+def dump_settings(db):
+	#TODO
+	pass
 
 if __name__ == "__main__":
 	sys.exit(main())
