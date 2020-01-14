@@ -4,9 +4,25 @@ import argparse
 import logging
 import struct
 import io
+import os, codecs, locale
 
 # Miranda dbx_mmap database reader
+
+
+# We need to explicitly set an encoding
+#   locale.getpreferredencoding()	# usually CP_ANSI
+#   sys.getdefaultencoding()		# usually always 'ascii'
+#   sys.stdin.encoding				# usually CP_OEM or whatever is CHCPd! Just what we need.
+# Python ignores this documented explicit override but we'll suport it too
+if 'PYTHONIOENCODING' in os.environ:
+	encoding = os.environ['PYTHONIOENCODING']
+else:
+	encoding = sys.stdin.encoding
+sys.stdout = codecs.getwriter(encoding)(sys.stdout)
+sys.stdout.errors = 'replace'					# skip unencodable symbols
+
 log = logging.getLogger('miranda-dbx_mmap')
+
 
 """
 See:
@@ -121,7 +137,7 @@ class DBContact(DBStruct):
 		) = tuple
 
 	def __str__(self):
-		return str({
+		return unicode({
 			'signature': self.signature,
 			'ofsNext': self.ofsNext,
 			'ofsFirstSettings': self.ofsFirstSettings,
@@ -153,6 +169,28 @@ class DBContact(DBStruct):
 			list[settings.moduleName] = settings
 			ofsSettings = settings.ofsNext
 		return list
+
+	# Retrieves setting value or None
+	def get_setting(self, moduleName, settingName, default = None):
+		if not moduleName in self.settings:
+			return default
+		moduleSettings = self.settings[moduleName]
+		setting = moduleSettings[settingName]
+		if setting == None:
+			return default
+		return setting.value
+
+	# Access by index or name. Returns DBContactSettings (module settings).
+	# Querying a pair will return you DBSetting.
+	def __getitem__(self, arg):
+		if isinstance(arg, tuple):
+			return self[arg[0]][arg[1]]
+		if isinstance(arg, (int, long)):
+			return self._settings[arg]
+		for setting in self.settings():
+			if setting.moduleName == arg:
+				return setting.value
+		return None
 
 
 """
@@ -188,10 +226,10 @@ class DBContactSettings(DBStruct):
 			dbname = DBModuleName()
 			dbname.read(file)
 			self.moduleName = dbname.name
-		self.get_settings()
+		self.settings()
 	
 	_settings = None
-	def get_settings(self):
+	def settings(self):
 		if self._settings == None:
 			self._settings = self.parse_settings()
 		return self._settings
@@ -212,10 +250,36 @@ class DBContactSettings(DBStruct):
 
 	def __str__(self):
 		ret = self.moduleName + "\n"
-		settings = self.get_settings()
+		settings = self.settings()
 		for setting in settings:
-			ret += '  ' + str(settings[setting]) + "\n"
+			ret += '  ' + unicode(settings[setting]) + "\n"
 		return ret
+
+	# Access by index or name. Returns DBSetting object or None
+	def __getitem__(self, arg):
+		settings = self.settings()
+		if isinstance(arg, (int, long)):
+			return settings[arg]
+		for setting in settings:
+			if setting == arg:
+				return settings[setting]
+		return None
+    
+	# Iteration
+	def __iter__(self):
+		return Iter(self, 0)
+	class Iter:
+		def __init__(self, module, start=0):
+			self.module = module
+			self.idx = start-1
+		def __iter__(self):
+			return self
+		def __next__(self):
+			if self.idx < len(self.module._settings):
+				self.idx += 1
+			else:
+				raise StopIteration()
+			return self.module._settings[self.idx]
 
 
 """
@@ -333,7 +397,7 @@ class DBSetting(DBStruct):
 		return self.type_to_str(self.type)
 	
 	def __str__(self):
-		return self.name+' ('+self.type_str()+') '+str(self.value)
+		return self.name+' ('+self.type_str()+') '+unicode(self.value)
 
 
 """
@@ -408,8 +472,11 @@ class MirandaDbxMmap:
 				contactOffset = contact.ofsNext
 			for contact in self._contacts:
 				contact.expand(self.file)
+				contact.protocol = contact.get_setting('Protocol', 'p')
+				contact.nick = contact.get_setting('CList', 'MyHandle')
+				if (contact.nick == None) and (contact.protocol <> None):
+					contact.nick = contact.get_setting(contact.protocol, 'Nick')
 		return self._contacts
-
 
 # Can be called manually for testing
 def main():
@@ -417,14 +484,18 @@ def main():
 	parser.add_argument("dbname", help='path to database file')
 	parser.add_argument('--debug', action='store_const', const=logging.DEBUG, default=logging.WARNING,
 		help='enable debug output')
+	parser.add_argument("--dump-modules", help='prints all module names', action='store_true')		
+	parser.add_argument("--dump-contacts-low", help='prints all contacts (low-level)', action='store_true')
 	parser.add_argument("--dump-contacts", help='prints all contacts', action='store_true')
-	parser.add_argument("--dump-modules", help='prints all modules', action='store_true')
 	parser.add_argument("--dump-settings", help='prints all settings for the given contact', type=str, action='append')
 	args = parser.parse_args()
 	
 	logging.basicConfig(level=args.debug, format='%(levelname)-8s %(message)s')
 	
 	db = MirandaDbxMmap(args.dbname)
+	
+	if args.dump_contacts_low:
+		dump_contacts_low(db)
 	
 	if args.dump_contacts:
 		dump_contacts(db)
@@ -436,12 +507,22 @@ def main():
 		for contact_name in args.dump_settings:
 			dump_settings(db, contact_name)
 
+def dump_contacts_low(db):
+	for contact in db.contacts():
+		totalEvents += contact.eventCount
+
 def dump_contacts(db):
 	totalEvents = 0
 	for contact in db.contacts():
-		print str(contact)
+		print unicode(contact.nick)
+		print u"  Protocol: "+unicode(contact.protocol)
+		print u"  MyHandle: "+unicode(contact.get_setting('CList', 'MyHandle'))
+		print u"  Group: "+unicode(contact.get_setting('CList', 'Group'))
+		print u"  Hidden: "+unicode(contact.get_setting('CList', 'Hidden'))
+		print u"  Events: "+unicode(contact.eventCount)
 		totalEvents += contact.eventCount
-	print "Total events: "+str(totalEvents)
+	print "Total events: "+unicode(totalEvents)
+
 
 def dump_modules(db):
 	moduleOffset = db.header.ofsModuleNames
