@@ -5,9 +5,10 @@ import logging
 import struct
 import io
 import os, codecs, locale
+import pprint # pretty printing
+
 
 # Miranda dbx_mmap database reader
-
 
 # We need to explicitly set an encoding
 #   locale.getpreferredencoding()	# usually CP_ANSI
@@ -82,7 +83,7 @@ DWORD ofsUser;          // offset to DBContact representing the user
 DWORD ofsModuleNames;   // offset to first struct DBModuleName in the chain
 """
 class DBHeader(DBStruct):
-	FORMAT = '16sIIIIIII'
+	FORMAT = '=16sIIIIIII'
 	def unpack(self, tuple):
 		(self.signature,
 		self.version,
@@ -103,7 +104,7 @@ char name[1];           // name, no nul terminator
 """
 class DBModuleName(DBStruct):
 	SIGNATURE = 0x4DDECADE
-	FORMAT = "IIB"
+	FORMAT = "=IIB"
 	def read(self, file):
 		# read the static part
 		super(DBModuleName, self).read(file)
@@ -130,7 +131,7 @@ DWORD dwContactID;
 """
 class DBContact(DBStruct):
 	SIGNATURE = 0x43DECADE
-	FORMAT = "IIIIIIIII"
+	FORMAT = "=IIIIIIIII"
 	def unpack(self, tuple):
 		(self.signature,
 		self.ofsNext,
@@ -170,7 +171,7 @@ class DBContact(DBStruct):
 		ofsSettings = self.ofsFirstSettings
 		while ofsSettings > 0:
 			settings = DBContactSettings()
-			print "Seeking "+str(ofsSettings)
+			#print "Seeking "+str(ofsSettings)
 			file.seek(ofsSettings, 0)
 			settings.read(file)
 			settings.expand(file)
@@ -213,7 +214,7 @@ BYTE blob[1];           // the blob. a back-to-back sequence of DBSetting
 """
 class DBContactSettings(DBStruct):
 	SIGNATURE = 0x53DECADE
-	FORMAT = "IIII"
+	FORMAT = "=IIII"
 	def unpack(self, tuple):
 		(self.signature,
 		self.ofsNext,
@@ -230,7 +231,7 @@ class DBContactSettings(DBStruct):
 	moduleName = None
 	def expand(self, file):
 		if self.moduleName == None:
-			print "Seeking "+str(self.ofsModuleName)
+			#print "Seeking "+str(self.ofsModuleName)
 			file.seek(self.ofsModuleName, 0)
 			dbname = DBModuleName()
 			dbname.read(file)
@@ -448,8 +449,22 @@ class DBEvent(DBStruct):
 	# Modules define their event types after this one:
 	EVENTTYPE_MODULE_START		= 2000
 
+	"""
+	See also:
+	plugins\HistoryStats\src\statistic.h -- 
+		ICQEVENTTYPE_SMS
+		ICQEVENTTYPE_WEBPAGER
+		ICQEVENTTYPE_EMAILEXPRESS
+		EVENTTYPE_STATUSCHANGE,			# defined where?
+		EVENTTYPE_AVATARCHANGE,			# defined where?
+		// WaTrack events
+		EVENTTYPE_WAT_REQUEST,			# wat?
+		EVENTTYPE_WAT_ANSWER,
+		EVENTTYPE_WAT_ERROR,
+	"""
+
 	SIGNATURE = 0x45DECADE
-	FORMAT = "IIIIIIIHI"
+	FORMAT = "=IIIIIIIHI"
 	def unpack(self, tuple):
 		(self.signature,
 		self.contactID,
@@ -466,9 +481,9 @@ class DBEvent(DBStruct):
 		# read the static part
 		super(DBEvent, self).read(file)
 		# read the dynamic part
-		print vars(self)
-		print self.cbBlob
-		self.blob = file.read(self.cbBlob)
+		#print vars(self)
+		#self.blob = file.read(self.cbBlob)
+		# TODO:! Reenable !
 
 
 class MirandaDbxMmap:
@@ -484,7 +499,7 @@ class MirandaDbxMmap:
 	# cl must provide cl.FORMAT and cl.unpack()
 	def read(self, cl, offset = None):
 		if offset <> None:
-			print "Seeking "+str(offset)
+			#print "Seeking "+str(offset)
 			self.file.seek(offset, 0)
 		cl.read(self.file)
 		log.debug(vars(cl))
@@ -607,7 +622,8 @@ def event_stats(db):
 	event_stats_contact(db, db.user, stats)
 	for contact in db.contacts():
 		event_stats_contact(db, contact, stats)
-	print var(stats)
+	del stats['blobSizes'] # no point printing, too many messages of any size
+	pprint.pprint(stats)
 
 def event_stats_contact(db, contact, stats):
 	ofsEvent = contact.ofsFirstEvent
