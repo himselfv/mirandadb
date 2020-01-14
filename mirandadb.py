@@ -549,9 +549,7 @@ class DBEvent(DBStruct):
 		# read the static part
 		super(DBEvent, self).read(file)
 		# read the dynamic part
-		#print vars(self)
-		#self.blob = file.read(self.cbBlob)
-		# TODO:! Reenable !
+		self.blob = file.read(self.cbBlob)
 
 
 class MirandaDbxMmap:
