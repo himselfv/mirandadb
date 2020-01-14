@@ -719,7 +719,7 @@ def event_stats_contact(db, contact, stats):
 			s_flags['other'] += 1
 			stats['unknown_flags'] = stats['unknown_flags'] | other_flags
 		
-		if event.eventType > event.EVENTTYPE_MODULE_START:
+		if event.eventType >= event.EVENTTYPE_MODULE_START:
 			eventKey = (moduleName, event.eventType)
 		else:
 			eventKey = event.eventType
