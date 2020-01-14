@@ -50,13 +50,21 @@ DBHeader
 \--> ...
 """
 
+#
 # Inherit and override unpack() or read()
+# If self.FORMAT is present, its going to be automatically read and passed to unpack().
+# If self.SIGNATURE is present, its going to be compared to self.signature.
+#
 class DBStruct(object):
 	def read(self, file):
-		# struct.* only reads from buffer so need to read bytes
-		buffer = file.read(struct.calcsize(self.FORMAT))
-		tuple = struct.unpack(self.FORMAT, buffer)
-		self.unpack(tuple)
+		if hasattr(self, 'FORMAT'):
+			# struct.* only reads from buffer so need to read bytes
+			buffer = file.read(struct.calcsize(self.FORMAT))
+			tuple = struct.unpack(self.FORMAT, buffer)
+			self.unpack(tuple)
+		if hasattr(self, 'SIGNATURE'):
+			if self.signature <> self.SIGNATURE:
+				raise Exception(self.__name__+': expected signature '+str(self.SIGNATURE)+', found '+str(self.signature))
 
 
 """
@@ -88,13 +96,13 @@ class DBHeader(DBStruct):
 
 
 """
-#define DBMODULENAME_SIGNATURE  0x4DDECADEu
 DWORD signature;
 DWORD ofsNext;          // offset to the next module name in the chain
 BYTE cbName;            // number of characters in this module name
 char name[1];           // name, no nul terminator
 """
 class DBModuleName(DBStruct):
+	SIGNATURE = 0x4DDECADE
 	FORMAT = "IIB"
 	def read(self, file):
 		# read the static part
@@ -109,8 +117,6 @@ class DBModuleName(DBStruct):
 
 
 """
-#define DBCONTACT_SIGNATURE   0x43DECADEu
-
 DWORD signature;
 DWORD ofsNext;          // offset to the next contact in the chain. zero if
 // this is the 'user' contact or the last contact in the chain
@@ -123,6 +129,7 @@ DWORD tsFirstUnread;    // timestamp of the event at ofsFirstUnread
 DWORD dwContactID;
 """
 class DBContact(DBStruct):
+	SIGNATURE = 0x43DECADE
 	FORMAT = "IIIIIIIII"
 	def unpack(self, tuple):
 		(self.signature,
@@ -163,6 +170,7 @@ class DBContact(DBStruct):
 		ofsSettings = self.ofsFirstSettings
 		while ofsSettings > 0:
 			settings = DBContactSettings()
+			print "Seeking "+str(ofsSettings)
 			file.seek(ofsSettings, 0)
 			settings.read(file)
 			settings.expand(file)
@@ -194,7 +202,6 @@ class DBContact(DBStruct):
 
 
 """
-#define DBCONTACTSETTINGS_SIGNATURE  0x53DECADEu
 DWORD signature;
 DWORD ofsNext;          // offset to the next contactsettings in the chain
 DWORD ofsModuleName;   // offset to the DBModuleName of the owner of these settings
@@ -205,6 +212,7 @@ BYTE blob[1];           // the blob. a back-to-back sequence of DBSetting
 // structs, the last has cbName = 0
 """
 class DBContactSettings(DBStruct):
+	SIGNATURE = 0x53DECADE
 	FORMAT = "IIII"
 	def unpack(self, tuple):
 		(self.signature,
@@ -222,6 +230,7 @@ class DBContactSettings(DBStruct):
 	moduleName = None
 	def expand(self, file):
 		if self.moduleName == None:
+			print "Seeking "+str(self.ofsModuleName)
 			file.seek(self.ofsModuleName, 0)
 			dbname = DBModuleName()
 			dbname.read(file)
@@ -409,7 +418,6 @@ class DBSetting(DBStruct):
 
 
 """
-#define DBEVENT_SIGNATURE  0x45DECADEu
 DWORD signature;
 MCONTACT contactID;     // a contact this event belongs to
 DWORD ofsPrev, ofsNext;	// offset to the previous and next events in the
@@ -421,22 +429,27 @@ DWORD flags;            // see m_database.h, db/event/add
 WORD  wEventType;       // module-defined event type
 DWORD cbBlob;           // number of bytes in the blob
 BYTE  blob[1];          // the blob. module-defined formatting
-
-flags:
-#define DBEF_SENT       2  // this event was sent by the user. If not set this event was received.
-#define DBEF_READ       4  // event has been read by the user. It does not need to be processed any more except for history.
-#define DBEF_RTL        8  // event contains the right-to-left aligned text
-#define DBEF_UTF       16  // event contains a text in utf-8
-#define DBEF_ENCRYPTED 32  // event is encrypted (never reported outside a driver)
 """
 class DBEvent(DBStruct):
-	FORMAT = "IIIIIIIHI"
-	def read(self, file):
-		# read the static part
-		super(DBEvent, self).read(file)
-		# read the dynamic part
-		self.blob = file.read(self.cbBlob)
+	# Flags
+	DBEF_SENT		= 2  # this event was sent by the user. If not set this event was received.
+	DBEF_READ		= 4  # event has been read by the user. It does not need to be processed any more except for history.
+	DBEF_RTL		= 8  # event contains the right-to-left aligned text
+	DBEF_UTF		= 16 # event contains a text in utf-8
+	DBEF_ENCRYPTED	= 32 # event is encrypted (never reported outside a driver)
 	
+	# Predefined common event types
+	EVENTTYPE_MESSAGE		= 0
+	EVENTTYPE_URL			= 1
+	EVENTTYPE_CONTACTS		= 2
+	EVENTTYPE_ADDED			= 1000
+	EVENTTYPE_AUTHREQUEST	= 1001
+	EVENTTYPE_FILE			= 1002
+	# Modules define their event types after this one:
+	EVENTTYPE_MODULE_START		= 2000
+
+	SIGNATURE = 0x45DECADE
+	FORMAT = "IIIIIIIHI"
 	def unpack(self, tuple):
 		(self.signature,
 		self.contactID,
@@ -445,9 +458,17 @@ class DBEvent(DBStruct):
 		self.ofsModuleName,
 		self.timestamp,
 		self.flags,
-		self.wEventType,
+		self.eventType,
 		self.cbBlob
 		) = tuple
+	
+	def read(self, file):
+		# read the static part
+		super(DBEvent, self).read(file)
+		# read the dynamic part
+		print vars(self)
+		print self.cbBlob
+		self.blob = file.read(self.cbBlob)
 
 
 class MirandaDbxMmap:
@@ -463,6 +484,7 @@ class MirandaDbxMmap:
 	# cl must provide cl.FORMAT and cl.unpack()
 	def read(self, cl, offset = None):
 		if offset <> None:
+			print "Seeking "+str(offset)
 			self.file.seek(offset, 0)
 		cl.read(self.file)
 		log.debug(vars(cl))
@@ -489,6 +511,14 @@ class MirandaDbxMmap:
 				if contact.display_name == None:
 					contact.display_name = contact.nick
 		return self._contacts
+		
+	_moduleNames = {}
+	def get_module_name(self, ofsModule):
+		if not ofsModule in self._moduleNames:
+			module = self.read(DBModuleName(), ofsModule)
+			self._moduleNames[ofsModule] = module.name
+		return self._moduleNames[ofsModule]
+
 
 # Can be called manually for testing
 def main():
@@ -496,10 +526,11 @@ def main():
 	parser.add_argument("dbname", help='path to database file')
 	parser.add_argument('--debug', action='store_const', const=logging.DEBUG, default=logging.WARNING,
 		help='enable debug output')
-	parser.add_argument("--dump-modules", help='prints all module names', action='store_true')		
+	parser.add_argument("--dump-modules", help='prints all module names', action='store_true')
 	parser.add_argument("--dump-contacts-low", help='prints all contacts (low-level)', action='store_true')
 	parser.add_argument("--dump-contacts", help='prints all contacts', action='store_true')
 	parser.add_argument("--dump-settings", help='prints all settings for the given contact', type=str, action='append')
+	parser.add_argument("--event-stats", help='collects event statistics', action='store_true')
 	args = parser.parse_args()
 	
 	logging.basicConfig(level=args.debug, format='%(levelname)-8s %(message)s')
@@ -523,6 +554,10 @@ def main():
 				for contact in db.contacts():
 					if (contact.nick == contact_name) or (contact.display_name == contact_name):
 						dump_settings(db, contact)
+
+	if args.event_stats:
+		event_stats(db)
+
 
 def dump_contacts_low(db):
 	for contact in db.contacts():
@@ -560,6 +595,58 @@ def dump_settings(db, contact):
 	print display_name
 	for name in contact.settings:
 		print unicode(contact.settings[name])
+
+def event_stats(db):
+	stats = {}
+	stats['count'] = 0
+	stats['flags'] = {'sent': 0, 'read': 0, 'rtl': 0, 'utf': 0, 'encrypted': 0, 'other': 0}
+	stats['unknown_flags'] = 0  # collects unknown bit flags
+	stats['modules'] = {}
+	stats['types'] = {}
+	stats['blobSizes'] = {}
+	event_stats_contact(db, db.user, stats)
+	for contact in db.contacts():
+		event_stats_contact(db, contact, stats)
+	print var(stats)
+
+def event_stats_contact(db, contact, stats):
+	ofsEvent = contact.ofsFirstEvent
+	while ofsEvent <> 0:
+		event = db.read(DBEvent(), ofsEvent)
+		stats['count'] += 1
+		
+		moduleName = db.get_module_name(event.ofsModuleName)
+		s_modules = stats['modules']
+		s_modules[moduleName] = s_modules.get(moduleName, 0) + 1
+		
+		s_flags = stats['flags']
+		if event.flags & event.DBEF_SENT:
+			s_flags['sent'] += 1
+		elif event.flags & event.DBEF_READ:
+			s_flags['read'] += 1
+		elif event.flags & event.DBEF_RTL:
+			s_flags['rtl'] += 1
+		elif event.flags & event.DBEF_UTF:
+			s_flags['utf'] += 1
+		elif event.flags & event.DBEF_ENCRYPTED:
+			s_flags['encrypted'] += 1
+		other_flags = event.flags & ~(event.DBEF_SENT | event.DBEF_READ | event.DBEF_RTL | event.DBEF_UTF | event.DBEF_ENCRYPTED)
+		if other_flags <> 0:
+			s_flags['other'] += 1
+			stats['unknown_flags'] = stats['unknown_flags'] | other_flags
+		
+		if event.eventType > event.EVENTTYPE_MODULE_START:
+			eventKey = (moduleName, event.eventType)
+		else:
+			eventKey = event.eventType
+		s_types = stats['types']
+		s_types[eventKey] = s_types.get(eventKey, 0) + 1
+		
+		s_blobSizes = stats['blobSizes']
+		s_blobSizes[event.cbBlob] = s_blobSizes.get(event.cbBlob, 0) + 1
+		
+		ofsEvent = event.ofsNext
+
 
 if __name__ == "__main__":
 	sys.exit(main())
