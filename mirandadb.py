@@ -446,22 +446,90 @@ class DBEvent(DBStruct):
 	EVENTTYPE_ADDED			= 1000
 	EVENTTYPE_AUTHREQUEST	= 1001
 	EVENTTYPE_FILE			= 1002
-	# Modules define their event types after this one:
-	EVENTTYPE_MODULE_START		= 2000
+	# Modules define their event types starting with this one:
+	EVENTTYPE_MODULE_START	= 2000
+	
+	
+	# The following events are de-facto standards, used by multiple modules
+	
+	# Widely used. Originally from NewXStatusNotify or TabSRMM.
+	#   plugins\NewXstatusNotify\src\xstatus.h
+	#   plugins\TabSRMM\src\msgs.h
+	#   plugins\IEHistory\src\stdafx.h
+	EVENTTYPE_STATUSCHANGE	= 25368
+	
+	# Widely used. Defined in two different ways (AVATAR_CHANGE and AVATARCHANGE)
+	#   ExternalAPI\m_avatarhistory.h
+	EVENTTYPE_AVATAR_CHANGE	= 9003
+	
+	# Origin unknown, usage unknown
+	#   plugins\TabSRMM\src\msgs.h
+	EVENTTYPE_ERRMSG		= 25366
+	
+	
+	# The rest is module-specific; thankfully, most modules use only the standard ones
 
-	"""
-	See also:
-	plugins\HistoryStats\src\statistic.h -- 
-		ICQEVENTTYPE_SMS
-		ICQEVENTTYPE_WEBPAGER
-		ICQEVENTTYPE_EMAILEXPRESS
-		EVENTTYPE_STATUSCHANGE,			# defined where?
-		EVENTTYPE_AVATARCHANGE,			# defined where?
-		// WaTrack events
-		EVENTTYPE_WAT_REQUEST,			# wat?
-		EVENTTYPE_WAT_ANSWER,
-		EVENTTYPE_WAT_ERROR,
-	"""
+	# Jabber protocol
+	#   protocols\JabberG\src\stdafx.h
+	#   plugins\Scriver\src\msgs.h
+	#   plugins\IEView\src\HTMLBuilder.h
+	EVENTTYPE_JABBER_CHATSTATES		= 2000
+	EVENTTYPE_JABBER_PRESENCE		= 2001
+
+	# ICQ protocol
+	#   include\m_icq.h
+	#   plugins\NewEventNotify\src\stdafx.h		ICQEVENTTYPE_SMSCONFIRMATION
+	#   plugins\SMS\src\SMSConstans.h			ICQEVENTTYPE_SMSCONFIRMATION
+	# And in a lot of other places
+	ICQEVENTTYPE_SMS				= 2001
+	ICQEVENTTYPE_EMAILEXPRESS		= 2002
+	ICQEVENTTYPE_WEBPAGER			= 2003
+	ICQEVENTTYPE_MISSEDMESSAGE		= 2004
+	ICQEVENTTYPE_SMSCONFIRMATION	= 3001
+
+	# WaTrack
+	#   plugins\ExternalAPI\m_music.h
+	#   plugins\HistoryStats\src\statistic.h
+	EVENTTYPE_WAT_REQUEST			= 9601
+	EVENTTYPE_WAT_ANSWER			= 9602
+	EVENTTYPE_WAT_ERROR				= 9603
+	EVENTTYPE_WAT_MESSAGE			= 9604
+
+	# Steam
+	#   protocols\Steam\src\stdafx.h
+	EVENTTYPE_STEAM_CHATSTATES		= 2000
+
+	# Facebook
+	#   protocols\FacebookRM\src\constants.h
+	FACEBOOK_EVENTTYPE_CALL			= 10010
+	
+	# VK
+	#   protocols\VKontakte\src\vk.h
+	VK_USER_DEACTIVATE_ACTION		= 9321
+
+	# SkypeWeb
+	#  protocols\SkypeWeb\src\skype_db.h
+	SKYPE_DB_EVENT_TYPE_ACTION				= 10001
+	SKYPE_DB_EVENT_TYPE_INCOMING_CALL		= 10002
+	SKYPE_DB_EVENT_TYPE_CALL_INFO			= 10003
+	SKYPE_DB_EVENT_TYPE_FILETRANSFER_INFO	= 10004
+	SKYPE_DB_EVENT_TYPE_URIOBJ				= 10005
+	SKYPE_DB_EVENT_TYPE_EDITED_MESSAGE		= 10006
+	SKYPE_DB_EVENT_TYPE_MOJI				= 10007
+	SKYPE_DB_EVENT_TYPE_FILE				= 10008
+	SKYPE_DB_EVENT_TYPE_UNKNOWN				= 10009
+
+	# Twitter
+	#   protocols\Twitter\src\stdafx.h
+	TWITTER_DB_EVENT_TYPE_TWEET				= 2718
+	
+	# Tox
+	#   protocols\Tox\src\stdafx.h
+	# A message describing an user action. This is similar to /me (CTCP ACTION) on IRC.
+	TOX_DB_EVENT_ACTION						= 10000 + 1
+	# Probably an edit, but nothing defines TOX_MESSAGE_TYPE_CORRECTION and nothing uses this
+	#TOX_DB_EVENT_CORRECTION				= 10000 + TOX_MESSAGE_TYPE_CORRECTION
+
 
 	SIGNATURE = 0x45DECADE
 	FORMAT = "=IIIIIIIHI"
