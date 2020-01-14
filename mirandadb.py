@@ -100,7 +100,7 @@ class DBModuleName(DBStruct):
 		# read the static part
 		super(DBModuleName, self).read(file)
 		# read the dynamic part
-		self.name = file.read(self.cbName).decode('ascii')
+		self.name = unicode(file.read(self.cbName).decode('ascii'))
 	def unpack(self, tuple):
 		(self.signature,
 		self.ofsNext,
@@ -282,6 +282,12 @@ class DBContactSettings(DBStruct):
 			return self.module._settings[self.idx]
 
 
+class Bytes(str):
+	def __new__(cls, *args, **kw):
+		return str.__new__(cls, *args, **kw)
+	def __str__(self):
+		return self.encode('hex')
+
 """
 DBSetting:
 	BYTE settingNameLen
@@ -341,11 +347,13 @@ class DBSetting(DBStruct):
 		if namelen <= 0:
 			return
 		(self.name,	self.type) = struct.unpack(str(namelen)+"sB", file.read(namelen+1))
+		# Yes, the names are in UTF-8 too and there are live cases when this is used (e.g. ICQ server group names)
+		self.name = self.name.decode('utf-8')
 		# read the dynamic part
 		if self.type == self.DBVT_DELETED:
 			self.value = Deleted()
 		elif self.type == self.DBVT_BYTE:
-			self.value = file.read(1)
+			self.value = struct.unpack('B', file.read(1))[0]
 		elif self.type == self.DBVT_WORD:
 			self.value = struct.unpack('H', file.read(2))[0]
 		elif self.type == self.DBVT_DWORD:
@@ -356,14 +364,14 @@ class DBSetting(DBStruct):
 			if self.type == self.DBVT_ASCIIZ:
 				self.value = data.decode('mbcs')
 			elif self.type == self.DBVT_BLOB:
-				self.value = data
+				self.value = Bytes(data)
 			elif self.type == self.DBVT_UTF8:
 				self.value = data.decode('utf-8')
 			elif self.type == self.DBVT_WCHAR:
 				self.value = data.decode('ucs-16')
 			elif (self.type == self.DBVT_ENCRYPTED
 			  or self.type == self.DBVT_UNENCRYPTED):
-				self.value = data # cannot decrypt anything at this point
+				self.value = Bytes(data) # cannot decrypt anything at this point
 			else:
 				raise Exception('Invalid data type in setting entry: '+self.type_to_str(self.type))
 		else:
@@ -395,9 +403,9 @@ class DBSetting(DBStruct):
 
 	def type_str(self):
 		return self.type_to_str(self.type)
-	
+
 	def __str__(self):
-		return self.name+' ('+self.type_str()+') '+unicode(self.value)
+		return unicode(self.name)+u' ('+unicode(self.type_str())+u') '+unicode(self.value)
 
 
 """
@@ -473,9 +481,13 @@ class MirandaDbxMmap:
 			for contact in self._contacts:
 				contact.expand(self.file)
 				contact.protocol = contact.get_setting('Protocol', 'p')
-				contact.nick = contact.get_setting('CList', 'MyHandle')
-				if (contact.nick == None) and (contact.protocol <> None):
+				if contact.protocol <> None:
 					contact.nick = contact.get_setting(contact.protocol, 'Nick')
+				else:
+					contact.nick = None
+				contact.display_name = contact.get_setting('CList', 'MyHandle')
+				if contact.display_name == None:
+					contact.display_name = contact.nick
 		return self._contacts
 
 # Can be called manually for testing
@@ -505,7 +517,12 @@ def main():
 	
 	if args.dump_settings:
 		for contact_name in args.dump_settings:
-			dump_settings(db, contact_name)
+			if len(contact_name) <= 0:
+				dump_settings(db, db.user)
+			else:
+				for contact in db.contacts():
+					if (contact.nick == contact_name) or (contact.display_name == contact_name):
+						dump_settings(db, contact)
 
 def dump_contacts_low(db):
 	for contact in db.contacts():
@@ -514,8 +531,9 @@ def dump_contacts_low(db):
 def dump_contacts(db):
 	totalEvents = 0
 	for contact in db.contacts():
-		print unicode(contact.nick)
+		print unicode(contact.display_name)
 		print u"  Protocol: "+unicode(contact.protocol)
+		print u"  Nick: "+unicode(contact.nick)
 		print u"  MyHandle: "+unicode(contact.get_setting('CList', 'MyHandle'))
 		print u"  Group: "+unicode(contact.get_setting('CList', 'Group'))
 		print u"  Hidden: "+unicode(contact.get_setting('CList', 'Hidden'))
@@ -534,14 +552,14 @@ def dump_modules(db):
 		moduleOffset = module.ofsNext
 
 def dump_settings(db, contact):
-	print contact
-	if len(contact) <= 0:
-		contact = db.user
-	else:
-		contact = db.contacts()[contact]
-	
+	display_name = ''
+	if hasattr(contact, 'display_name'):
+		display_name = unicode(contact.display_name)
+	if hasattr(contact, 'protocol'):
+		display_name += ' ('+contact.protocol+')'
+	print display_name
 	for name in contact.settings:
-		print str(contact.settings[name])
+		print unicode(contact.settings[name])
 
 if __name__ == "__main__":
 	sys.exit(main())
