@@ -5,9 +5,7 @@ import logging
 import struct
 
 # Miranda dbx_mmap database reader
-
 log = logging.getLogger('miranda-dbx_mmap')
-logging.basicConfig(level=logging.DEBUG, format='%(levelname)-8s %(message)s')
 
 """
 See:
@@ -203,10 +201,14 @@ class MirandaDbxMmap:
 def main():
 	parser = argparse.ArgumentParser(description="Parse and print Miranda.")
 	parser.add_argument("dbname", help='path to database file')
+	parser.add_argument('--debug', action='store_const', const=logging.DEBUG, default=logging.WARNING,
+		help='enable debug output')
 	parser.add_argument("--dump-contacts", help='prints all contacts', action='store_true')
 	parser.add_argument("--dump-modules", help='prints all modules', action='store_true')
 	parser.add_argument("--dump-settings", help='prints all settings for the given contact', action='append', nargs=1)
 	args = parser.parse_args()
+	
+	logging.basicConfig(level=args.debug, format='%(levelname)-8s %(message)s')
 	
 	db = MirandaDbxMmap(args.dbname)
 	
