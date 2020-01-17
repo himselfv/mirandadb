@@ -675,9 +675,8 @@ class MirandaDbxMmap:
 			return DBAuthBlob(_unicode, event.blob)
 		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
 			return DBAuthBlob(_unicode, event.blob)
-		#elif event.eventType==event.EVENTTYPE_MESSAGE:
-			#return { 'text' : event.blob.decode(enc), 'unicode' : _unicode }
-		#	return event.blob.decode(enc)
+		elif event.eventType==event.EVENTTYPE_MESSAGE:
+			return { 'text' : event.blob.decode(enc), 'unicode' : _unicode }
 		else:
 			return event.blob.encode('hex')
 
