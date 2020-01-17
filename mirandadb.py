@@ -442,13 +442,12 @@ class DBEvent(DBStruct):
 	# Predefined common event types
 	EVENTTYPE_MESSAGE		= 0
 	EVENTTYPE_URL			= 1
-	EVENTTYPE_CONTACTS		= 2
-	EVENTTYPE_ADDED			= 1000
-	EVENTTYPE_AUTHREQUEST	= 1001
-	EVENTTYPE_FILE			= 1002
+	EVENTTYPE_CONTACTS		= 2				# data = DBContactsBlob [uin, nick]
+	EVENTTYPE_ADDED			= 1000			# data = DBAuthBlob
+	EVENTTYPE_AUTHREQUEST	= 1001			# data = DBAuthBlob
+	EVENTTYPE_FILE			= 1002			# data = DBFileBlob [DWORD, filename, description]
 	# Modules define their event types starting with this one:
 	EVENTTYPE_MODULE_START	= 2000
-	
 	
 	# The following events are de-facto standards, used by multiple modules
 	
@@ -465,7 +464,6 @@ class DBEvent(DBStruct):
 	# Origin unknown, usage unknown
 	#   plugins\TabSRMM\src\msgs.h
 	EVENTTYPE_ERRMSG		= 25366
-	
 	
 	# The rest is module-specific; thankfully, most modules use only the standard ones
 
@@ -552,14 +550,59 @@ class DBEvent(DBStruct):
 		self.blob = file.read(self.cbBlob)
 
 
+#
+# Event content types
+#
+class DBEventBlob(DBStruct):
+	def __init__(self, unicode, file = None):
+		self.unicode = unicode
+		# "file" may be a Bytes() instead
+		if file <> None:
+			read_op = getattr(file, "read", None)
+			if not callable(read_op):
+				file = io.BytesIO(file)
+			self.read(file)
+	
+	def read_str(self, file):
+		s = ""
+		while True:
+			c = file.read(1)
+			if len(c) == 0:
+				log.warning('No more bytes where string is expected in event data (read:'+s.encode('hex')+')')
+				break
+			if c == chr(0):
+				break
+			s = s + c
+		if self.unicode:
+			return s.decode('utf-8')
+		else:
+			return s.decode('mbcs')
+
+class DBAuthBlob(DBEventBlob):
+	#[uin:DWORD, hContact:DWORD, nick, firstName, lastName, email, reason]
+	FORMAT = "=II"
+	def unpack(self, tuple):
+		(self.uin,
+		self.hContact
+		) = tuple
+	
+	def read(self, file):
+		super(DBEventBlob, self).read(file)
+		self.nick = self.read_str(file)
+		self.firstName = self.read_str(file)
+		self.lastName = self.read_str(file)
+		self.email = self.read_str(file)
+		self.reason = self.read_str(file)
+
+
+
 class MirandaDbxMmap:
 	file = None
-	
 	def __init__(self, filename):
 		self.file = open(filename, "rb")
 		self.header = self.read(DBHeader())
 		self.user = self.read(DBContact(), self.header.ofsUser)
-		self.user.expand(self.file)
+		self.expand_contact(self.user)
 
 	# Reads and unpacks data at a given offset or where the pointer is now
 	# cl must provide cl.FORMAT and cl.unpack()
@@ -570,6 +613,13 @@ class MirandaDbxMmap:
 		cl.read(self.file)
 		log.debug(vars(cl))
 		return cl
+	
+	_moduleNames = {}
+	def get_module_name(self, ofsModule):
+		if not ofsModule in self._moduleNames:
+			module = self.read(DBModuleName(), ofsModule)
+			self._moduleNames[ofsModule] = module.name
+		return self._moduleNames[ofsModule]
 	
 	# Returns a list of all DBContact()s
 	_contacts = None
@@ -582,23 +632,54 @@ class MirandaDbxMmap:
 				self._contacts.append(contact)
 				contactOffset = contact.ofsNext
 			for contact in self._contacts:
-				contact.expand(self.file)
-				contact.protocol = contact.get_setting('Protocol', 'p')
-				if contact.protocol <> None:
-					contact.nick = contact.get_setting(contact.protocol, 'Nick')
-				else:
-					contact.nick = None
-				contact.display_name = contact.get_setting('CList', 'MyHandle')
-				if contact.display_name == None:
-					contact.display_name = contact.nick
+				self.expand_contact(contact)
 		return self._contacts
-		
-	_moduleNames = {}
-	def get_module_name(self, ofsModule):
-		if not ofsModule in self._moduleNames:
-			module = self.read(DBModuleName(), ofsModule)
-			self._moduleNames[ofsModule] = module.name
-		return self._moduleNames[ofsModule]
+	
+	def expand_contact(self, contact):
+		contact.expand(self.file)
+		contact.protocol = contact.get_setting('Protocol', 'p')
+		if contact.protocol <> None:
+			contact.nick = contact.get_setting(contact.protocol, 'Nick')
+		else:
+			contact.nick = None
+		contact.display_name = contact.get_setting('CList', 'MyHandle')
+		if contact.display_name == None:
+			contact.display_name = contact.nick
+		if contact.display_name == None:
+			contact.display_name = u'#'+unicode(contact.dwContactID);
+		if contact.protocol <> None:
+			contact.display_name = contact.protocol + u'\\' + contact.display_name
+	
+	# Returns all contacts with nickname matching the given one, or db.user if contact_name is empty
+	def contacts_by_name(self, contact_name):
+		if len(contact_name) <= 0:
+			return [self.user]
+		else:
+			ret = []
+			for contact in self.contacts():
+				if (contact.nick == contact_name) or (contact.display_name == contact_name):
+					ret.append(contact)
+			return ret
+		return []
+	
+	# Returns either a string or something that can be vars()ed
+	def decode_event_data(self, event):
+		unicode = (event.DBEF_UTF & event.flags) <> 0
+		if unicode:
+			enc = 'utf-8'
+		else:
+			enc = 'mbcs'
+		if event.flags & event.DBEF_ENCRYPTED: # Can't decrypt, return hex
+			return event.blob.encode('hex')
+		elif event.eventType==event.EVENTTYPE_ADDED:
+			return DBAuthBlob(unicode, event.blob)
+		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
+			return DBAuthBlob(unicode, event.blob)
+		elif event.eventType==event.EVENTTYPE_MESSAGE:
+			return event.blob.decode(enc)
+		else:
+			return event.blob.encode('hex')
+
 
 
 # Can be called manually for testing
@@ -612,6 +693,7 @@ def main():
 	parser.add_argument("--dump-contacts", help='prints all contacts', action='store_true')
 	parser.add_argument("--dump-settings", help='prints all settings for the given contact', type=str, action='append')
 	parser.add_argument("--event-stats", help='collects event statistics', action='store_true')
+	parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
 	args = parser.parse_args()
 	
 	logging.basicConfig(level=args.debug, format='%(levelname)-8s %(message)s')
@@ -629,24 +711,26 @@ def main():
 	
 	if args.dump_settings:
 		for contact_name in args.dump_settings:
-			if len(contact_name) <= 0:
-				dump_settings(db, db.user)
-			else:
-				for contact in db.contacts():
-					if (contact.nick == contact_name) or (contact.display_name == contact_name):
-						dump_settings(db, contact)
+			for contact in db.contacts_by_name(contact_name):
+				dump_settings(db, contact)
+
+	if args.dump_events:
+		for contact_name in args.dump_events:
+			for contact in db.contacts_by_name(contact_name):
+				dump_events(db, contact)
 
 	if args.event_stats:
 		event_stats(db)
 
-
 def dump_contacts_low(db):
-	for contact in db.contacts():
+	totalEvents = 0
+	for contact in ([db.user] + db.contacts()):
+		pprint.pprint(vars(contact))
 		totalEvents += contact.eventCount
 
 def dump_contacts(db):
 	totalEvents = 0
-	for contact in db.contacts():
+	for contact in ([db.user] + db.contacts()):
 		print unicode(contact.display_name)
 		print u"  Protocol: "+unicode(contact.protocol)
 		print u"  Nick: "+unicode(contact.nick)
@@ -656,7 +740,6 @@ def dump_contacts(db):
 		print u"  Events: "+unicode(contact.eventCount)
 		totalEvents += contact.eventCount
 	print "Total events: "+unicode(totalEvents)
-
 
 def dump_modules(db):
 	moduleOffset = db.header.ofsModuleNames
@@ -727,6 +810,14 @@ def event_stats_contact(db, contact, stats):
 		s_blobSizes = stats['blobSizes']
 		s_blobSizes[event.cbBlob] = s_blobSizes.get(event.cbBlob, 0) + 1
 		
+		ofsEvent = event.ofsNext
+
+def dump_events(db, contact):
+	print "Events for "+contact.display_name+": "
+	ofsEvent = contact.ofsFirstEvent
+	while ofsEvent <> 0:
+		event = db.read(DBEvent(), ofsEvent)
+		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + unicode(vars(db.decode_event_data(event)))
 		ofsEvent = event.ofsNext
 
 
