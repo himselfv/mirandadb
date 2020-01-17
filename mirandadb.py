@@ -576,7 +576,7 @@ class DBEventBlob(DBStruct):
 		if self.unicode:
 			return s.decode('utf-8')
 		else:
-			return s.decode('mbcs')
+			return unicode(s.decode('mbcs'))
 
 class DBAuthBlob(DBEventBlob):
 	#[uin:DWORD, hContact:DWORD, nick, firstName, lastName, email, reason]
@@ -664,19 +664,20 @@ class MirandaDbxMmap:
 	
 	# Returns either a string or something that can be vars()ed
 	def decode_event_data(self, event):
-		unicode = (event.DBEF_UTF & event.flags) <> 0
-		if unicode:
+		_unicode = (event.DBEF_UTF & event.flags) <> 0
+		if _unicode:
 			enc = 'utf-8'
 		else:
 			enc = 'mbcs'
 		if event.flags & event.DBEF_ENCRYPTED: # Can't decrypt, return hex
 			return event.blob.encode('hex')
 		elif event.eventType==event.EVENTTYPE_ADDED:
-			return DBAuthBlob(unicode, event.blob)
+			return DBAuthBlob(_unicode, event.blob)
 		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
-			return DBAuthBlob(unicode, event.blob)
-		elif event.eventType==event.EVENTTYPE_MESSAGE:
-			return event.blob.decode(enc)
+			return DBAuthBlob(_unicode, event.blob)
+		#elif event.eventType==event.EVENTTYPE_MESSAGE:
+			#return { 'text' : event.blob.decode(enc), 'unicode' : _unicode }
+		#	return event.blob.decode(enc)
 		else:
 			return event.blob.encode('hex')
 
@@ -812,12 +813,20 @@ def event_stats_contact(db, contact, stats):
 		
 		ofsEvent = event.ofsNext
 
+def text_str(data):
+	if isinstance(data, basestring):
+		return data
+	elif isinstance(data, dict):
+		return ', '.join([ repr(key) + ': ' + repr(value) for (key, value) in data.items()])
+	else:
+		return unicode(vars(data))
+
 def dump_events(db, contact):
 	print "Events for "+contact.display_name+": "
 	ofsEvent = contact.ofsFirstEvent
 	while ofsEvent <> 0:
 		event = db.read(DBEvent(), ofsEvent)
-		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + unicode(vars(db.decode_event_data(event)))
+		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + text_str(db.decode_event_data(event))
 		ofsEvent = event.ofsNext
 
 
