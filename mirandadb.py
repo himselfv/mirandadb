@@ -58,6 +58,7 @@ DBHeader
 #
 class DBStruct(object):
 	def read(self, file):
+		self.offset = file.tell()	# store offset to help track the origin
 		if hasattr(self, 'FORMAT'):
 			# struct.* only reads from buffer so need to read bytes
 			buffer = file.read(struct.calcsize(self.FORMAT))
@@ -569,6 +570,7 @@ class DBEventBlob(DBStruct):
 			c = file.read(1)
 			if len(c) == 0:
 				log.warning('No more bytes where string is expected in event data (read:'+s.encode('hex')+')')
+				self.has_problems = True
 				break
 			if c == chr(0):
 				break
@@ -654,6 +656,8 @@ class MirandaDbxMmap:
 	def contacts_by_name(self, contact_name):
 		if len(contact_name) <= 0:
 			return [self.user]
+		elif contact_name == '*':
+			return [self.user] + self.contacts()
 		else:
 			ret = []
 			for contact in self.contacts():
@@ -661,6 +665,8 @@ class MirandaDbxMmap:
 					ret.append(contact)
 			return ret
 		return []
+	
+	bad_count = 0
 	
 	# Returns either a string or something that can be vars()ed
 	def decode_event_data(self, event):
@@ -672,11 +678,22 @@ class MirandaDbxMmap:
 		if event.flags & event.DBEF_ENCRYPTED: # Can't decrypt, return hex
 			return event.blob.encode('hex')
 		elif event.eventType==event.EVENTTYPE_ADDED:
-			return DBAuthBlob(_unicode, event.blob)
+			blob = DBAuthBlob(_unicode, event.blob)
+			if hasattr(blob, 'has_problems'):
+				log.warning('DBAuthBlob at '+str(event.offset)+' has problems')
+			return blob
 		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
-			return DBAuthBlob(_unicode, event.blob)
+			blob = DBAuthBlob(_unicode, event.blob)
+			if hasattr(blob, 'has_problems'):
+				log.warning('DBAuthBlob at '+str(event.offset)+' has problems')
+			return blob
 		elif event.eventType==event.EVENTTYPE_MESSAGE:
-			return { 'text' : event.blob.decode(enc), 'unicode' : _unicode }
+			try:
+				return { 'text' : event.blob.decode(enc), 'unicode' : _unicode }
+			except UnicodeDecodeError:
+				self.bad_count += 1
+				log.warning('Event text cannot be decoded: offset='+str(event.offset))
+				return { 'undecoded_text' : event.blob.encode('hex'), 'unicode' : _unicode }
 		else:
 			return event.blob.encode('hex')
 
