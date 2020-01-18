@@ -6,6 +6,7 @@ import struct
 import io
 import os, codecs, locale
 import pprint # pretty printing
+import utfutils
 
 
 # Miranda dbx_mmap database reader
@@ -680,23 +681,35 @@ class MirandaDbxMmap:
 		elif event.eventType==event.EVENTTYPE_ADDED:
 			blob = DBAuthBlob(_unicode, event.blob)
 			if hasattr(blob, 'has_problems'):
-				log.warning('DBAuthBlob at '+str(event.offset)+' has problems')
+				log.warning('Event@'+str(event.offset)+': DBAuthBlob has problems')
 			return blob
 		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
 			blob = DBAuthBlob(_unicode, event.blob)
 			if hasattr(blob, 'has_problems'):
-				log.warning('DBAuthBlob at '+str(event.offset)+' has problems')
+				log.warning('Event@'+str(event.offset)+': DBAuthBlob has problems')
 			return blob
 		elif event.eventType==event.EVENTTYPE_MESSAGE:
-			try:
-				return { 'text' : event.blob.decode(enc), 'unicode' : _unicode }
-			except UnicodeDecodeError:
-				self.bad_count += 1
-				log.warning('Event text cannot be decoded: offset='+str(event.offset))
-				return { 'undecoded_text' : event.blob.encode('hex'), 'unicode' : _unicode }
+			return self.decode_event_data_string(event, _unicode)
 		else:
 			return event.blob.encode('hex')
-
+	
+	# Decodes event data as simple string
+	def decode_event_data_string(self, event, _unicode):
+		# Simple events often have a terminating null in data
+		if event.blob[-1:] == "\0":
+			blob = event.blob[:-1]
+		else:
+			blob = event.blob
+		if _unicode:
+			ret = utfutils.utf8trydecode(blob)
+		else:
+			ret = utfutils.mbcstrydecode(blob)
+		if ret[0] == True:
+			return { 'text' : ret[1], 'unicode' : _unicode }
+		else:
+			self.bad_count += 1
+			log.warning('Event@'+str(event.offset)+': '+ret[2])
+			return { 'bad_text' : ret[1], 'unicode' : _unicode, 'problem' : ret[2] }
 
 
 # Can be called manually for testing
@@ -730,14 +743,16 @@ def main():
 		for contact_name in args.dump_settings:
 			for contact in db.contacts_by_name(contact_name):
 				dump_settings(db, contact)
-
+	
 	if args.dump_events:
 		for contact_name in args.dump_events:
 			for contact in db.contacts_by_name(contact_name):
 				dump_events(db, contact)
-
+	
 	if args.event_stats:
 		event_stats(db)
+	
+	log.warning("Bad entries: "+str(db.bad_count))
 
 def dump_contacts_low(db):
 	totalEvents = 0
