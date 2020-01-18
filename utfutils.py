@@ -17,42 +17,6 @@ def utf16bytes(str):
 		ret += (chr(ch & 0xFF) + chr(ch >> 8))
 	return ret
 
-# Decodes MBCS text and verifies that it's not junk
-# Returns (True, the decoded text) or (False, hex text, problem description)
-def mbcstrydecode(data):
-	try:
-		text = data.decode('mbcs')
-	except DecodeError:
-		return (False, "mbcs:"+data.encode('hex'), "Cannot decode as mbcs")
-	return (True, text)
-
-# Decodes UTF8 text and verifies that it's not junk
-# Returns (True, the decoded text) or (False, hex text, problem description)
-def utf8trydecode(data):
-	try:
-		text = data.decode('utf-8')
-	except UnicodeDecodeError:
-		return (False, "utf8:"+data.encode('hex'), "Cannot decode as utf-8")
-	ret = utf16test(text)
-	if ret == True:
-		return (True, text)
-	else:
-		# There are some cases where DECODED utf16 contains utf8!
-		# Let's try to analyze this
-		try:
-			# This may again end with \0
-			text2_bytes = removeterm0(utf16bytes(text))
-			text2 = text2_bytes.decode('utf-8')
-		except UnicodeDecodeError as err:
-			text2 = "Doubly decode failed: "+str(err)
-			pass
-		else:
-			ret2 = utf16test(text2)
-			if ret2 == True:
-				return (False, text2, 'Doubly encoded utf8!')
-		# Doesn't seem to be the case; just return the original attempt
-		return (False, "utf16:"+text2_bytes.encode('hex')+', utf8:'+data.encode('hex')+', du16:'+text2, ret)
-
 
 # Verifies that the data looks like valid UTF8 and not junk
 # Returns True or a problem description

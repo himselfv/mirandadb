@@ -6,6 +6,7 @@ import struct
 import io
 import os, codecs, locale
 import pprint # pretty printing
+import fnmatch # wildcard matching
 import utfutils
 
 
@@ -173,19 +174,20 @@ class DBContact(DBStruct):
 		ofsSettings = self.ofsFirstSettings
 		while ofsSettings > 0:
 			settings = DBContactSettings()
-			#print "Seeking "+str(ofsSettings)
 			file.seek(ofsSettings, 0)
 			settings.read(file)
 			settings.expand(file)
-			list[settings.moduleName] = settings
+			list[settings.moduleName.lower()] = settings
 			ofsSettings = settings.ofsNext
 		return list
 
 	# Retrieves setting value or None
 	def get_setting(self, moduleName, settingName, default = None):
+		moduleName = moduleName.lower()
 		if not moduleName in self.settings:
 			return default
 		moduleSettings = self.settings[moduleName]
+		settingName = settingName.lower()
 		setting = moduleSettings[settingName]
 		if setting == None:
 			return default
@@ -198,6 +200,7 @@ class DBContact(DBStruct):
 			return self[arg[0]][arg[1]]
 		if isinstance(arg, (int, long)):
 			return self._settings[arg]
+		arg = arg.lower()
 		for setting in self.settings():
 			if setting.moduleName == arg:
 				return setting.value
@@ -233,7 +236,6 @@ class DBContactSettings(DBStruct):
 	moduleName = None
 	def expand(self, file):
 		if self.moduleName == None:
-			#print "Seeking "+str(self.ofsModuleName)
 			file.seek(self.ofsModuleName, 0)
 			dbname = DBModuleName()
 			dbname.read(file)
@@ -257,7 +259,7 @@ class DBContactSettings(DBStruct):
 			setting.read(blobIo)
 			if setting.name == None:
 				break
-			list[setting.name] = setting
+			list[setting.name.lower()] = setting
 		return list
 
 	def __str__(self):
@@ -272,6 +274,7 @@ class DBContactSettings(DBStruct):
 		settings = self.settings()
 		if isinstance(arg, (int, long)):
 			return settings[arg]
+		arg = arg.lower()
 		for setting in settings:
 			if setting == arg:
 				return settings[setting]
@@ -645,6 +648,7 @@ class MirandaDbxMmap:
 			contact.nick = contact.get_setting(contact.protocol, 'Nick')
 		else:
 			contact.nick = None
+		# Guess some telling display name
 		contact.display_name = contact.get_setting('CList', 'MyHandle')
 		if contact.display_name == None:
 			contact.display_name = contact.nick
@@ -652,20 +656,43 @@ class MirandaDbxMmap:
 			contact.display_name = u'#'+unicode(contact.dwContactID);
 		if contact.protocol <> None:
 			contact.display_name = contact.protocol + u'\\' + contact.display_name
+		# Guess stable ID for some common protocols
+		if contact.protocol <> None:
+			contact.id = contact.get_setting(contact.protocol, "jid")		# xmpp
+			if contact.id == None:
+				contact.id = contact.get_setting(contact.protocol, "uin")	# ICQ
+			if contact.id == None:
+				contact.id = contact.get_setting(contact.protocol, "id")	# vkontakte
+		else:
+			contact.id = None
 	
 	# Returns all contacts with nickname matching the given one, or db.user if contact_name is empty
 	def contacts_by_name(self, contact_name):
 		if len(contact_name) <= 0:
 			return [self.user]
-		elif contact_name == '*':
+		if contact_name == '*':
 			return [self.user] + self.contacts()
-		else:
-			ret = []
-			for contact in self.contacts():
-				if (contact.nick == contact_name) or (contact.display_name == contact_name):
-					ret.append(contact)
-			return ret
-		return []
+		contact_name=contact_name.lower()
+		log.warning("looking for: "+contact_name);
+		ret = []
+		for contact in self.contacts():
+			if contact.nick and fnmatch.fnmatch(contact.nick.lower(), contact_name):
+				ret.append(contact)
+				continue
+			if contact.display_name and fnmatch.fnmatch(contact.display_name.lower(), contact_name):
+				ret.append(contact)
+				continue
+			if contact.id and fnmatch.fnmatch(str(contact.id).lower(), contact_name):
+				ret.append(contact)
+				continue
+			if contact.id and fnmatch.fnmatch((contact.protocol+u'\\'+str(contact.id)).lower(), contact_name):
+				ret.append(contact)
+				continue
+			if '#'+str(contact.dwContactID) == contact_name:
+				ret.append(contact)
+				continue
+		log.warning('entries: '+str(len(ret)))
+		return ret
 	
 	bad_count = 0
 	
@@ -693,6 +720,8 @@ class MirandaDbxMmap:
 		else:
 			return event.blob.encode('hex')
 	
+	adjust_text = False
+	
 	# Decodes event data as simple string
 	def decode_event_data_string(self, event, _unicode):
 		# Simple events often have a terminating null in data
@@ -701,15 +730,54 @@ class MirandaDbxMmap:
 		else:
 			blob = event.blob
 		if _unicode:
-			ret = utfutils.utf8trydecode(blob)
+			ret = self.utf8trydecode(blob)
 		else:
-			ret = utfutils.mbcstrydecode(blob)
+			ret = self.mbcstrydecode(blob)
 		if ret[0] == True:
 			return { 'text' : ret[1], 'unicode' : _unicode }
 		else:
 			self.bad_count += 1
 			log.warning('Event@'+str(event.offset)+': '+ret[2])
 			return { 'bad_text' : ret[1], 'unicode' : _unicode, 'problem' : ret[2] }
+
+
+	# Decodes MBCS text and verifies that it's not junk
+	# Returns (True, the decoded text) or (False, hex text, problem description)
+	def mbcstrydecode(self, data):
+		try:
+			text = data.decode('mbcs')
+		except DecodeError:
+			return (False, "mbcs:"+data.encode('hex'), "Cannot decode as mbcs")
+		return (True, text)
+
+	# Decodes UTF8 text and verifies that it's not junk
+	# Returns (True, the decoded text) or (False, hex text, problem description)
+	def utf8trydecode(self, data):
+		try:
+			text = data.decode('utf-8')
+		except UnicodeDecodeError:
+			return (False, "utf8:"+data.encode('hex'), "Cannot decode as utf-8")
+		if not self.fix_text:
+			return (True, text)
+		ret = utfutils.utf16test(text)
+		if ret == True:
+			return (True, text)
+		else:
+			# There are some cases where DECODED utf16 contains utf8!
+			# Let's try to analyze this
+			try:
+				# This may again end with \0
+				text2_bytes = utfutils.removeterm0(utfutils.utf16bytes(text))
+				text2 = text2_bytes.decode('utf-8')
+			except UnicodeDecodeError as err:
+				text2 = "Doubly decode failed: "+str(err)
+				pass
+			else:
+				ret2 = utfutils.utf16test(text2)
+				if ret2 == True:
+					return (False, text2, 'Doubly encoded utf8!')
+			# Doesn't seem to be the case; just return the original attempt
+			return (False, "utf16:"+text2_bytes.encode('hex')+', utf8:'+data.encode('hex')+', du16:'+text2, ret)
 
 
 # Can be called manually for testing
@@ -724,11 +792,13 @@ def main():
 	parser.add_argument("--dump-settings", help='prints all settings for the given contact', type=str, action='append')
 	parser.add_argument("--event-stats", help='collects event statistics', action='store_true')
 	parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
+	parser.add_argument("--fix-text", help='try to autodetect/fix broken unicode messages (otherwise dump as is)', action='store_true')
 	args = parser.parse_args()
 	
 	logging.basicConfig(level=args.debug, format='%(levelname)-8s %(message)s')
 	
 	db = MirandaDbxMmap(args.dbname)
+	db.fix_text = args.fix_text
 	
 	if args.dump_contacts_low:
 		dump_contacts_low(db)
@@ -765,6 +835,8 @@ def dump_contacts(db):
 	for contact in ([db.user] + db.contacts()):
 		print unicode(contact.display_name)
 		print u"  Protocol: "+unicode(contact.protocol)
+		print u"  ID: "+unicode(contact.id)
+		print u"  Contact ID: #"+unicode(contact.dwContactID)
 		print u"  Nick: "+unicode(contact.nick)
 		print u"  MyHandle: "+unicode(contact.get_setting('CList', 'MyHandle'))
 		print u"  Group: "+unicode(contact.get_setting('CList', 'Group'))
@@ -844,20 +916,20 @@ def event_stats_contact(db, contact, stats):
 		
 		ofsEvent = event.ofsNext
 
-def text_str(data):
-	if isinstance(data, basestring):
-		return data
-	elif isinstance(data, dict):
-		return ', '.join([ repr(key) + ': ' + repr(value) for (key, value) in data.items()])
-	else:
-		return unicode(vars(data))
-
 def dump_events(db, contact):
 	print "Events for "+contact.display_name+": "
 	ofsEvent = contact.ofsFirstEvent
 	while ofsEvent <> 0:
 		event = db.read(DBEvent(), ofsEvent)
-		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + text_str(db.decode_event_data(event))
+		data = db.decode_event_data(event)
+		# Stringify data
+		if isinstance(data, basestring):
+			pass
+		elif isinstance(data, dict):
+			data = ', '.join([ repr(key) + ': ' + repr(value) for (key, value) in data.items()])
+		else:
+			data = unicode(vars(data))
+		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
 		ofsEvent = event.ofsNext
 
 
