@@ -699,12 +699,12 @@ class MirandaDbxMmap:
 	# Returns either a string or something that can be vars()ed
 	def decode_event_data(self, event):
 		_unicode = (event.DBEF_UTF & event.flags) <> 0
-		if _unicode:
-			enc = 'utf-8'
-		else:
-			enc = 'mbcs'
 		if event.flags & event.DBEF_ENCRYPTED: # Can't decrypt, return hex
-			return event.blob.encode('hex')
+			return {
+				'type' : 'encrypted',
+				'hex' : event.blob.encode('hex'),
+				'unicode' : _unicode
+				}
 		elif event.eventType==event.EVENTTYPE_ADDED:
 			blob = DBAuthBlob(_unicode, event.blob)
 			if hasattr(blob, 'has_problems'):
@@ -718,66 +718,71 @@ class MirandaDbxMmap:
 		elif event.eventType==event.EVENTTYPE_MESSAGE:
 			return self.decode_event_data_string(event, _unicode)
 		else:
-			return event.blob.encode('hex')
-	
-	adjust_text = False
+			return {
+				'type' : 'unsupported',
+				'hex' : event.blob.encode('hex'),
+				'unicode' : _unicode
+				}
 	
 	# Decodes event data as simple string
 	def decode_event_data_string(self, event, _unicode):
 		# Simple events often have a terminating null in data
-		if event.blob[-1:] == "\0":
-			blob = event.blob[:-1]
-		else:
-			blob = event.blob
+		blob = utfutils.removeterm0(event.blob)
 		if _unicode:
 			ret = self.utf8trydecode(blob)
 		else:
 			ret = self.mbcstrydecode(blob)
-		if ret[0] == True:
-			return { 'text' : ret[1], 'unicode' : _unicode }
-		else:
+		ret['unicode'] = _unicode
+		if 'problem' in ret:
 			self.bad_count += 1
-			log.warning('Event@'+str(event.offset)+': '+ret[2])
-			return { 'bad_text' : ret[1], 'unicode' : _unicode, 'problem' : ret[2] }
-
+			log.warning('Event@'+str(event.offset)+': '+ret['problem'])
+		return ret
 
 	# Decodes MBCS text and verifies that it's not junk
-	# Returns (True, the decoded text) or (False, hex text, problem description)
 	def mbcstrydecode(self, data):
+		ret = {}
 		try:
-			text = data.decode('mbcs')
+			ret['text'] = data.decode('mbcs')
 		except DecodeError:
-			return (False, "mbcs:"+data.encode('hex'), "Cannot decode as mbcs")
-		return (True, text)
+			ret['problem'] = "Cannot decode as mbcs"
+			ret['mbcs'] = data.encode('hex')
+			return ret
+		return ret
 
 	# Decodes UTF8 text and verifies that it's not junk
 	# Returns (True, the decoded text) or (False, hex text, problem description)
 	def utf8trydecode(self, data):
+		ret = {}
 		try:
 			text = data.decode('utf-8')
+			ret['text'] = text
 		except UnicodeDecodeError:
-			return (False, "utf8:"+data.encode('hex'), "Cannot decode as utf-8")
-		if not self.fix_text:
-			return (True, text)
-		ret = utfutils.utf16test(text)
-		if ret == True:
-			return (True, text)
+			ret['problem'] = "Cannot decode as utf-8"
+			ret['utf8'] = data.encode('hex')
+			return ret
+		test = utfutils.utf16test(text)
+		if test == True:
+			return ret
+		ret['problem'] = test
+		ret['utf8'] = data.encode('hex')
+		text_bytes = utfutils.utf16bytes(text)
+		ret['utf16'] = text_bytes.encode('hex')
+		"""
+		# There are some cases where DECODED utf16 contains utf8!
+		# Let's try to analyze this
+		try:
+			# This may again end with \0
+			text_bytes = utfutils.removeterm0(text_bytes)
+			text2 = text2_bytes.decode('utf-8')
+		except UnicodeDecodeError as err:
+			text2 = "Doubly decode failed: "+str(err)
 		else:
-			# There are some cases where DECODED utf16 contains utf8!
-			# Let's try to analyze this
-			try:
-				# This may again end with \0
-				text2_bytes = utfutils.removeterm0(utfutils.utf16bytes(text))
-				text2 = text2_bytes.decode('utf-8')
-			except UnicodeDecodeError as err:
-				text2 = "Doubly decode failed: "+str(err)
-				pass
-			else:
-				ret2 = utfutils.utf16test(text2)
-				if ret2 == True:
-					return (False, text2, 'Doubly encoded utf8!')
-			# Doesn't seem to be the case; just return the original attempt
-			return (False, "utf16:"+text2_bytes.encode('hex')+', utf8:'+data.encode('hex')+', du16:'+text2, ret)
+			ret2 = utfutils.utf16test(text2)
+			if ret2 == True:
+				return (False, text2, 'Doubly encoded utf8!')
+		# Doesn't seem to be the case; just return the original attempt
+		"""
+		return ret
 
 
 # Can be called manually for testing
@@ -792,13 +797,12 @@ def main():
 	parser.add_argument("--dump-settings", help='prints all settings for the given contact', type=str, action='append')
 	parser.add_argument("--event-stats", help='collects event statistics', action='store_true')
 	parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
-	parser.add_argument("--fix-text", help='try to autodetect/fix broken unicode messages (otherwise dump as is)', action='store_true')
+	parser.add_argument("--bad-events", help='dumps bad events only', action='store_true')
 	args = parser.parse_args()
 	
 	logging.basicConfig(level=args.debug, format='%(levelname)-8s %(message)s')
 	
 	db = MirandaDbxMmap(args.dbname)
-	db.fix_text = args.fix_text
 	
 	if args.dump_contacts_low:
 		dump_contacts_low(db)
@@ -815,9 +819,11 @@ def main():
 				dump_settings(db, contact)
 	
 	if args.dump_events:
+		params = {}
+		params['bad_only'] = args.bad_events
 		for contact_name in args.dump_events:
 			for contact in db.contacts_by_name(contact_name):
-				dump_events(db, contact)
+				dump_events(db, contact, params)
 	
 	if args.event_stats:
 		event_stats(db)
@@ -916,12 +922,19 @@ def event_stats_contact(db, contact, stats):
 		
 		ofsEvent = event.ofsNext
 
-def dump_events(db, contact):
+def dump_events(db, contact, params):
 	print "Events for "+contact.display_name+": "
 	ofsEvent = contact.ofsFirstEvent
 	while ofsEvent <> 0:
 		event = db.read(DBEvent(), ofsEvent)
+		ofsEvent = event.ofsNext
 		data = db.decode_event_data(event)
+		if ('bad_only' in params):
+			if not isinstance(data, dict):
+				continue
+			if not ('problem' in data):
+				continue
+			params['offset'] = event.offset
 		# Stringify data
 		if isinstance(data, basestring):
 			pass
@@ -930,7 +943,6 @@ def dump_events(db, contact):
 		else:
 			data = unicode(vars(data))
 		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
-		ofsEvent = event.ofsNext
 
 
 if __name__ == "__main__":
