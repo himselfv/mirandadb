@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
+import sys
 import logging
+import argparse
 
 log = logging.getLogger('utf')
 
@@ -15,6 +17,18 @@ def utf16bytes(str):
 	for ch in str:
 		ch = ord(ch)
 		ret += (chr(ch & 0xFF) + chr(ch >> 8))
+	return ret
+
+def bytesutf16(bytes):
+	ret = ""
+	i = 0
+	while i < len(bytes) // 2:
+		ch1 = bytes[2*i+0]
+		ch2 = bytes[2*i+1]
+		i += 1
+		ret += unichr((ord(ch2) << 8) + ord(ch1))
+	if len(bytes) % 2 <> 0:
+		log.warning('Odd-length utf16 hex string!')
 	return ret
 
 
@@ -201,3 +215,28 @@ class CharStats:
 		self.weird += 1
 		self.weird_list.append(hex(ch))
 		"""
+
+
+# Can be called manually for testing
+def main():
+	parser = argparse.ArgumentParser(description="Parse and print Miranda.")
+	parser.add_argument('--debug', action='store_const', const=logging.DEBUG, default=logging.WARNING,
+		help='enable debug output')
+	parser.add_argument("--test-file", help='evaluates all lines from the file', type=str)
+	args = parser.parse_args()
+	
+	logging.basicConfig(level=args.debug, format='%(levelname)-8s %(message)s')
+	
+	if args.test_file:
+		test_file_hex(args.test_file)
+
+def test_file_hex(filename):
+	for line in open(filename, 'r'):
+		line = line.strip('\n\r')
+		print line
+		utf16line = bytesutf16(line.decode('hex'))
+		print str(utf16test(utf16line))
+		print ""
+
+if __name__ == "__main__":
+	sys.exit(main())

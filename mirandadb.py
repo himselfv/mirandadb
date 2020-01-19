@@ -824,6 +824,7 @@ def main():
 		for contact_name in args.dump_events:
 			for contact in db.contacts_by_name(contact_name):
 				dump_events(db, contact, params)
+		print ', '.join([ repr(key) + ': ' + repr(value) for (key, value) in bad_offsets.items()])
 	
 	if args.event_stats:
 		event_stats(db)
@@ -922,6 +923,7 @@ def event_stats_contact(db, contact, stats):
 		
 		ofsEvent = event.ofsNext
 
+bad_offsets = {}
 def dump_events(db, contact, params):
 	print "Events for "+contact.display_name+": "
 	ofsEvent = contact.ofsFirstEvent
@@ -934,7 +936,12 @@ def dump_events(db, contact, params):
 				continue
 			if not ('problem' in data):
 				continue
-			params['offset'] = event.offset
+			data['offset'] = event.offset
+			bad_offset = event.offset // 0x10000
+			if bad_offset in bad_offsets:
+				bad_offsets[bad_offset] += 1
+			else:
+				bad_offsets[bad_offset] = 1
 		# Stringify data
 		if isinstance(data, basestring):
 			pass
@@ -943,7 +950,6 @@ def dump_events(db, contact, params):
 		else:
 			data = unicode(vars(data))
 		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
-
 
 if __name__ == "__main__":
 	sys.exit(main())
