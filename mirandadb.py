@@ -595,6 +595,7 @@ class MirandaDbxMmap(object):
 	file = None
 	def __init__(self, filename):
 		self.file = open(filename, "rb")
+		self.filename = filename
 		self.header = self.read(DBHeader())
 		self.user = self.read(DBContact(), self.header.ofsUser)
 		self.expand_contact(self.user)
@@ -914,7 +915,7 @@ def dump_events(db, contact, params):
 			if not ('problem' in data):
 				continue
 			data['offset'] = event.offset
-		print format_event(event, data)
+		print format_event(db, event, data)
 
 if __name__ == "__main__":
 	sys.exit(main())
