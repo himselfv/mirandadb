@@ -9,9 +9,9 @@ import utfutils
 log = logging.getLogger('miranda-dbx_mmap')
 
 # Enhances MirandaDbxMmap with some data scan/restore capabilities
-class MirandaDbxMmapChk(MirandaDbxMmap):
+class MirandaDbxMmapChk(mirandadb.MirandaDbxMmap):
 	def utf8trydecode(self, data):
-		ret = super(MirandDbxMmapChk, self).utf8trydecode(data)
+		ret = super(MirandaDbxMmapChk, self).utf8trydecode(data)
 		if 'problem' in ret:
 			return ret
 		
@@ -42,36 +42,17 @@ class MirandaDbxMmapChk(MirandaDbxMmap):
 		"""
 		return ret
 
-parser = argparse.ArgumentParser(description="Parse and print Miranda.",
-	parents=[coreutils.argparser()])
-parser.add_argument("dbname", help='path to database file')
-parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
-parser.add_argument("--bad-events", help='dumps bad events only', action='store_true')
-parser.add_argument("--bad-offsets", help='gathers bad event offset statistics', action='store_true')
-args = parser.parse_args()
-coreutils.init(args)
-
-db = MirandaDbxMmapChk(args.dbname)
 
 bad_event_count = 0
 bad_offsets = {}		# Bad event offset statistics
 
-if args.dump_events:
-	for contact_name in args.dump_events:
-		for contact in db.contacts_by_name(contact_name):
-			dump_events(db, contact)
-	log.warning("Bad entries: "+str(bad_count))
-	print "Bad entries:"+str(bad_count)
-	if args.bad_offsets:
-		print "Bad offsets:"
-		print '\n'.join([ repr(key) + ': ' + repr(value) for (key, value) in bad_offsets.items()])
-
-
-def dump_events(db, contact, params):
+def dump_events(db, contact):
 	print "Events for "+contact.display_name+": "
+	global bad_event_count
+	global bad_offsets
 	ofsEvent = contact.ofsFirstEvent
 	while ofsEvent <> 0:
-		event = db.read(DBEvent(), ofsEvent)
+		event = db.read(mirandadb.DBEvent(), ofsEvent)
 		ofsEvent = event.ofsNext
 		data = db.decode_event_data(event)
 		if isinstance(data, dict) and ('problem' in data):
@@ -96,3 +77,26 @@ def dump_events(db, contact, params):
 		else:
 			data = unicode(vars(data))
 		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
+
+
+# Main
+parser = argparse.ArgumentParser(description="Parse and print Miranda.",
+	parents=[coreutils.argparser()])
+parser.add_argument("dbname", help='path to database file')
+parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
+parser.add_argument("--bad-events", help='dumps bad events only', action='store_true')
+parser.add_argument("--bad-offsets", help='gathers bad event offset statistics', action='store_true')
+args = parser.parse_args()
+coreutils.init(args)
+
+db = MirandaDbxMmapChk(args.dbname)
+
+if args.dump_events:
+	for contact_name in args.dump_events:
+		for contact in db.contacts_by_name(contact_name):
+			dump_events(db, contact)
+	log.warning("Bad events: "+str(bad_event_count))
+	print "Bad events:"+str(bad_event_count)
+	if args.bad_offsets:
+		print "Bad offsets:"
+		print '\n'.join([ repr(key) + ': ' + repr(value) for (key, value) in bad_offsets.items()])

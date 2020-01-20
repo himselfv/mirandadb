@@ -591,7 +591,7 @@ class DBAuthBlob(DBEventBlob):
 
 
 
-class MirandaDbxMmap:
+class MirandaDbxMmap(object):
 	file = None
 	def __init__(self, filename):
 		self.file = open(filename, "rb")
@@ -854,16 +854,11 @@ def event_stats_contact(db, contact, stats):
 		s_modules[moduleName] = s_modules.get(moduleName, 0) + 1
 		
 		s_flags = stats['flags']
-		if event.flags & event.DBEF_SENT:
-			s_flags['sent'] += 1
-		elif event.flags & event.DBEF_READ:
-			s_flags['read'] += 1
-		elif event.flags & event.DBEF_RTL:
-			s_flags['rtl'] += 1
-		elif event.flags & event.DBEF_UTF:
-			s_flags['utf'] += 1
-		elif event.flags & event.DBEF_ENCRYPTED:
-			s_flags['encrypted'] += 1
+		if event.flags & event.DBEF_SENT:			s_flags['sent'] += 1
+		elif event.flags & event.DBEF_READ:			s_flags['read'] += 1
+		elif event.flags & event.DBEF_RTL:			s_flags['rtl'] += 1
+		elif event.flags & event.DBEF_UTF:			s_flags['utf'] += 1
+		elif event.flags & event.DBEF_ENCRYPTED:	s_flags['encrypted'] += 1
 		other_flags = event.flags & ~(event.DBEF_SENT | event.DBEF_READ | event.DBEF_RTL | event.DBEF_UTF | event.DBEF_ENCRYPTED)
 		if other_flags <> 0:
 			s_flags['other'] += 1
@@ -888,7 +883,7 @@ def dump_events(db, contact, params):
 		event = db.read(DBEvent(), ofsEvent)
 		ofsEvent = event.ofsNext
 		data = db.decode_event_data(event)
-		if ('bad_only' in params):
+		if params['bad_only']:
 			if not isinstance(data, dict):
 				continue
 			if not ('problem' in data):
