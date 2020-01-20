@@ -6,6 +6,7 @@ import coreutils
 import mirandadb
 import utfutils
 import fnmatch
+import datetime
 
 log = logging.getLogger('mirevo')
 
@@ -25,9 +26,16 @@ class ContactHistory(object):
 		self.props[propName] = versions
 
 
+def db_get_version(db):
+	fname = db.filename
+	if args.version_by == 'filename':
+		return os.path.basename(fname)
+	else:
+		return datetime.datetime.fromtimestamp(os.path.getmtime(fname)).strftime('%Y.%m.%d')
+
 # Scans another database and adds contact history entries
-def contact_evo_scan(db, contact_histories):
-	ver = os.path.basename(db.filename)
+def contact_evo_update(contact_histories, db):
+	ver = db_get_version(db)
 	for contact in db.contacts():
 		contact_history = contact_histories.get(contact.dwContactID, None)
 		if contact_history == None:
@@ -43,8 +51,10 @@ def contact_evo_print(contact_history):
 	print "#"+str(contact_history.contactId)
 	for prop in contact_history.props:
 		revs = contact_history.props[prop]
+		if args.only_changes and (len(revs) <= 1):
+			continue
 		for rev in revs:
-			print rev[0]+u"\\"+prop + u": " + unicode(rev[1])
+			print rev[0]+u"\t"+prop + u"\t\t" + unicode(rev[1])
 	print ""
 
 
@@ -53,6 +63,9 @@ parser = argparse.ArgumentParser(description="Loads all matching database snapsh
 	parents=[coreutils.argparser()])
 parser.add_argument("mask", help='path and file mask for the database files')
 parser.add_argument("--contacts", help='trace the evolution of contact properties', action='store_true')
+parser.add_argument("--only-changes", help='skip properties which have exactly one version', action='store_true')
+parser.add_argument("--sort-by", help='order input files by', choices=['filename', 'modified'], default='modified' )
+parser.add_argument("--version-by", help='what to use as a version identifier', choices=['filename', 'modified'], default='modified' )
 args = parser.parse_args()
 coreutils.init(args)
 
@@ -65,8 +78,13 @@ if dir == '':
 files = []
 for filename in fnmatch.filter(os.listdir(dir), mask):
 	fname = dir+'\\'+filename
-	files.append((os.path.getmtime(fname), fname))
-files.sort()
+	fmtime = os.path.getmtime(fname)
+	if args.sort_by == 'filename':
+		key = fname
+	else:
+		key = fmtime
+	files.append((key, fname, fmtime))
+files.sort()	# by first entry, the key
 
 # Zero vars
 contact_histories = {}	# id -> contact
@@ -76,7 +94,7 @@ for file in files:
 	log.info("Processing "+file[1]+"...")
 	db = mirandadb.MirandaDbxMmap(file[1])
 	if args.contacts:
-		contact_evo_scan(db, contact_histories)
+		contact_evo_update(contact_histories, db)
 
 if args.contacts:
 	print "Contacts:"
