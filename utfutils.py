@@ -141,7 +141,7 @@ class CharStats:
 	blocks = [
 		(0x00ff, 0),			# Latin
 		(0x036f, 1),			# Rare latin, IPA, Bopomofo, Misc
-		(0x03ff, 2),			# Greek and Coptic
+		(0x03ff, 1),			# Greek and Coptic
 		(0x04ff, 0),			# Cyrillic
 		(0x052f, 2),			# Cyrillic supplement
 		(0x1fff, 2),			# A lot of weird scripts
