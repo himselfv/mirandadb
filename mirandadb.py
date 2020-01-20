@@ -5,24 +5,13 @@ import logging
 import struct
 import io
 import os, codecs, locale
+import coreutils
 import pprint # pretty printing
 import fnmatch # wildcard matching
 import utfutils
 
 
 # Miranda dbx_mmap database reader
-
-# We need to explicitly set an encoding
-#   locale.getpreferredencoding()	# usually CP_ANSI
-#   sys.getdefaultencoding()		# usually always 'ascii'
-#   sys.stdin.encoding				# usually CP_OEM or whatever is CHCPd! Just what we need.
-# Python ignores this documented explicit override but we'll suport it too
-if 'PYTHONIOENCODING' in os.environ:
-	encoding = os.environ['PYTHONIOENCODING']
-else:
-	encoding = sys.stdin.encoding
-sys.stdout = codecs.getwriter(encoding)(sys.stdout)
-sys.stdout.errors = 'replace'					# skip unencodable symbols
 
 log = logging.getLogger('miranda-dbx_mmap')
 
@@ -694,8 +683,6 @@ class MirandaDbxMmap:
 		log.warning('entries: '+str(len(ret)))
 		return ret
 	
-	bad_count = 0
-	
 	# Returns either a string or something that can be vars()ed
 	def decode_event_data(self, event):
 		_unicode = (event.DBEF_UTF & event.flags) <> 0
@@ -734,7 +721,6 @@ class MirandaDbxMmap:
 			ret = self.mbcstrydecode(blob)
 		ret['unicode'] = _unicode
 		if 'problem' in ret:
-			self.bad_count += 1
 			log.warning('Event@'+str(event.offset)+': '+ret['problem'])
 		return ret
 
@@ -759,38 +745,14 @@ class MirandaDbxMmap:
 		except UnicodeDecodeError:
 			ret['problem'] = "Cannot decode as utf-8"
 			ret['utf8'] = data.encode('hex')
-			return ret
-		test = utfutils.utf16test(text)
-		if test == True:
-			return ret
-		ret['problem'] = test
-		ret['utf8'] = data.encode('hex')
-		text_bytes = utfutils.utf16bytes(text)
-		ret['utf16'] = text_bytes.encode('hex')
-		"""
-		# There are some cases where DECODED utf16 contains utf8!
-		# Let's try to analyze this
-		try:
-			# This may again end with \0
-			text_bytes = utfutils.removeterm0(text_bytes)
-			text2 = text2_bytes.decode('utf-8')
-		except UnicodeDecodeError as err:
-			text2 = "Doubly decode failed: "+str(err)
-		else:
-			ret2 = utfutils.utf16test(text2)
-			if ret2 == True:
-				return (False, text2, 'Doubly encoded utf8!')
-		# Doesn't seem to be the case; just return the original attempt
-		"""
 		return ret
 
 
 # Can be called manually for testing
 def main():
-	parser = argparse.ArgumentParser(description="Parse and print Miranda.")
+	parser = argparse.ArgumentParser(description="Parse and print Miranda.",
+		parents=[coreutils.argparser()])
 	parser.add_argument("dbname", help='path to database file')
-	parser.add_argument('--debug', action='store_const', const=logging.DEBUG, default=logging.WARNING,
-		help='enable debug output')
 	parser.add_argument("--dump-modules", help='prints all module names', action='store_true')
 	parser.add_argument("--dump-contacts-low", help='prints all contacts (low-level)', action='store_true')
 	parser.add_argument("--dump-contacts", help='prints all contacts', action='store_true')
@@ -799,8 +761,7 @@ def main():
 	parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
 	parser.add_argument("--bad-events", help='dumps bad events only', action='store_true')
 	args = parser.parse_args()
-	
-	logging.basicConfig(level=args.debug, format='%(levelname)-8s %(message)s')
+	coreutils.init(args)
 	
 	db = MirandaDbxMmap(args.dbname)
 	
@@ -824,12 +785,9 @@ def main():
 		for contact_name in args.dump_events:
 			for contact in db.contacts_by_name(contact_name):
 				dump_events(db, contact, params)
-		print ', '.join([ repr(key) + ': ' + repr(value) for (key, value) in bad_offsets.items()])
 	
 	if args.event_stats:
 		event_stats(db)
-	
-	log.warning("Bad entries: "+str(db.bad_count))
 
 def dump_contacts_low(db):
 	totalEvents = 0
@@ -923,7 +881,6 @@ def event_stats_contact(db, contact, stats):
 		
 		ofsEvent = event.ofsNext
 
-bad_offsets = {}
 def dump_events(db, contact, params):
 	print "Events for "+contact.display_name+": "
 	ofsEvent = contact.ofsFirstEvent
@@ -937,11 +894,6 @@ def dump_events(db, contact, params):
 			if not ('problem' in data):
 				continue
 			data['offset'] = event.offset
-			bad_offset = event.offset // 0x10000
-			if bad_offset in bad_offsets:
-				bad_offsets[bad_offset] += 1
-			else:
-				bad_offsets[bad_offset] = 1
 		# Stringify data
 		if isinstance(data, basestring):
 			pass
