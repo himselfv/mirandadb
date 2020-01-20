@@ -57,7 +57,7 @@ class DBStruct(object):
 			self.unpack(tuple)
 		if hasattr(self, 'SIGNATURE'):
 			if self.signature <> self.SIGNATURE:
-				raise Exception(self.__name__+': expected signature '+str(self.SIGNATURE)+', found '+str(self.signature))
+				raise Exception(type(self).__name__+': expected signature '+str(self.SIGNATURE)+', found '+str(self.signature))
 
 
 """
@@ -655,33 +655,45 @@ class MirandaDbxMmap(object):
 		else:
 			contact.id = None
 	
+	# Returns a contact by its database dwContactID
+	def contact_by_id(self, id):
+		if id == 0:
+			return self.user
+		for contact in self.contacts():
+			if contact.dwContactID == id:
+				return contact
+		return None
+	
 	# Returns all contacts with nickname matching the given one, or db.user if contact_name is empty
-	def contacts_by_name(self, contact_name):
-		if len(contact_name) <= 0:
+	def contacts_by_mask(self, contact_mask):
+		if len(contact_mask) <= 0:
 			return [self.user]
-		if contact_name == '*':
+		if contact_mask == '*':
 			return [self.user] + self.contacts()
-		contact_name=contact_name.lower()
-		log.warning("looking for: "+contact_name);
+		contact_mask=contact_mask.lower()
+		log.warning("looking for: "+contact_mask);
 		ret = []
 		for contact in self.contacts():
-			if contact.nick and fnmatch.fnmatch(contact.nick.lower(), contact_name):
+			if contact.nick and fnmatch.fnmatch(contact.nick.lower(), contact_mask):
 				ret.append(contact)
 				continue
-			if contact.display_name and fnmatch.fnmatch(contact.display_name.lower(), contact_name):
+			if contact.display_name and fnmatch.fnmatch(contact.display_name.lower(), contact_mask):
 				ret.append(contact)
 				continue
-			if contact.id and fnmatch.fnmatch(str(contact.id).lower(), contact_name):
+			if contact.id and fnmatch.fnmatch(str(contact.id).lower(), contact_mask):
 				ret.append(contact)
 				continue
-			if contact.id and fnmatch.fnmatch((contact.protocol+u'\\'+str(contact.id)).lower(), contact_name):
+			if contact.id and fnmatch.fnmatch((contact.protocol+u'\\'+str(contact.id)).lower(), contact_mask):
 				ret.append(contact)
 				continue
-			if '#'+str(contact.dwContactID) == contact_name:
+			if '#'+str(contact.dwContactID) == contact_mask:
 				ret.append(contact)
 				continue
 		log.warning('entries: '+str(len(ret)))
 		return ret
+	
+	def read_event(self, offset):
+		return self.read(DBEvent(), offset)
 	
 	# Returns either a string or something that can be vars()ed
 	def decode_event_data(self, event):
@@ -776,14 +788,14 @@ def main():
 	
 	if args.dump_settings:
 		for contact_name in args.dump_settings:
-			for contact in db.contacts_by_name(contact_name):
+			for contact in db.contacts_by_mask(contact_name):
 				dump_settings(db, contact)
 	
 	if args.dump_events:
 		params = {}
 		params['bad_only'] = args.bad_events
 		for contact_name in args.dump_events:
-			for contact in db.contacts_by_name(contact_name):
+			for contact in db.contacts_by_mask(contact_name):
 				dump_events(db, contact, params)
 	
 	if args.event_stats:
@@ -876,11 +888,24 @@ def event_stats_contact(db, contact, stats):
 		
 		ofsEvent = event.ofsNext
 
+# Produces a pretty line describing the event
+def format_event(db, event, data = None):
+	if data == None:
+		data = db.decode_event_data(event)
+	# Stringify data
+	if isinstance(data, basestring):
+		pass
+	elif isinstance(data, dict):
+		data = ', '.join([ repr(key) + ': ' + repr(value) for (key, value) in data.items()])
+	else:
+		data = unicode(vars(data))
+	return str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
+
 def dump_events(db, contact, params):
 	print "Events for "+contact.display_name+": "
 	ofsEvent = contact.ofsFirstEvent
 	while ofsEvent <> 0:
-		event = db.read(DBEvent(), ofsEvent)
+		event = db.read_event(ofsEvent)
 		ofsEvent = event.ofsNext
 		data = db.decode_event_data(event)
 		if params['bad_only']:
@@ -889,14 +914,7 @@ def dump_events(db, contact, params):
 			if not ('problem' in data):
 				continue
 			data['offset'] = event.offset
-		# Stringify data
-		if isinstance(data, basestring):
-			pass
-		elif isinstance(data, dict):
-			data = ', '.join([ repr(key) + ': ' + repr(value) for (key, value) in data.items()])
-		else:
-			data = unicode(vars(data))
-		print str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
+		print format_event(event, data)
 
 if __name__ == "__main__":
 	sys.exit(main())
