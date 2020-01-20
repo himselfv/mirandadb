@@ -10,28 +10,39 @@ import datetime
 
 log = logging.getLogger('mirevo')
 
-class ContactHistory(object):
-	def __init__(self, contactId):
-		self.contactId = contactId
-		self.props = {}
-		
-	def add_prop(self, version, propName, value):
-		if propName in self.props:
-			versions = self.props[propName]
-		else:
-			versions = []
-		if (len(versions) > 0) and (versions[-1][1] == value):
-			return
-		versions.append((version, value))
-		self.props[propName] = versions
-
-
+# Returns the text to identify db in the version list (configurable)
 def db_get_version(db):
 	fname = db.filename
 	if args.version_by == 'filename':
 		return os.path.basename(fname)
 	else:
 		return datetime.datetime.fromtimestamp(os.path.getmtime(fname)).strftime('%Y.%m.%d')
+
+class ContactHistory(object):
+	def __init__(self, contactId):
+		self.contactId = contactId
+		self.props = {}
+		self.props_by_ver = {}
+	
+	def add_prop(self, version, propName, value):
+		if propName in self.props:
+			versions = self.props[propName]
+		else:
+			versions = []
+		if (len(versions) > 0) and (versions[-1][1] == value):
+			return	# Do not add neither this nor props_by_version
+		versions.append((version, value))
+		self.props[propName] = versions
+		
+		if version in self.props_by_ver:
+			props = self.props_by_ver[version]
+		else:
+			props = []
+		props.append((propName, value))
+		self.props_by_ver[version] = props
+	
+	def prop_has_changes(self, propName):
+		return (propName in self.props) and (len(self.props[propName]) > 1)
 
 # Scans another database and adds contact history entries
 def contact_evo_update(contact_histories, db):
@@ -49,12 +60,20 @@ def contact_evo_update(contact_histories, db):
 # Prints one contact history
 def contact_evo_print(contact_history):
 	print "#"+str(contact_history.contactId)
-	for prop in contact_history.props:
-		revs = contact_history.props[prop]
-		if args.only_changes and (len(revs) <= 1):
-			continue
-		for rev in revs:
-			print rev[0]+u"\t"+prop + u"\t\t" + unicode(rev[1])
+	if args.group_by == 'prop':
+		for prop in contact_history.props:
+			revs = contact_history.props[prop]
+			if args.only_changes and (len(revs) <= 1):
+				continue
+			for rev in revs:
+				print rev[0]+u"\t"+prop + u"\t\t" + unicode(rev[1])
+	else:
+		for ver in contact_history.props_by_ver:
+			revs = contact_history.props_by_ver[ver]
+			for rev in revs:
+				if args.only_changes and not contact_history.prop_has_changes(rev[0]):
+					continue
+				print ver+u"\t"+rev[0] + u"\t\t" + unicode(rev[1])
 	print ""
 
 
@@ -66,6 +85,7 @@ parser.add_argument("--contacts", help='trace the evolution of contact propertie
 parser.add_argument("--only-changes", help='skip properties which have exactly one version', action='store_true')
 parser.add_argument("--sort-by", help='order input files by', choices=['filename', 'modified'], default='modified' )
 parser.add_argument("--version-by", help='what to use as a version identifier', choices=['filename', 'modified'], default='modified' )
+parser.add_argument("--group-by", help='group the results by', choices=['prop', 'ver'], default='prop' )
 args = parser.parse_args()
 coreutils.init(args)
 
