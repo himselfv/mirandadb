@@ -52,9 +52,16 @@ def contact_evo_update(contact_histories, db):
 		if contact_history == None:
 			contact_history = ContactHistory(contact.dwContactID)
 		# Add all properties which we track
-		contact_history.add_prop(ver, 'id', contact.id)
-		contact_history.add_prop(ver, 'nick', contact.nick)
-		contact_history.add_prop(ver, 'display_name', contact.display_name)
+		if not args.all_props:
+			contact_history.add_prop(ver, 'id', contact.id)
+			contact_history.add_prop(ver, 'nick', contact.nick)
+			contact_history.add_prop(ver, 'display_name', contact.display_name)
+		else:
+			for moduleName in contact.settings:
+				module = contact.settings[moduleName]
+				for setting in module:
+					contact_history.add_prop(ver, moduleName+'\\'+setting.name, setting.value)
+			
 		contact_histories[contact.dwContactID] = contact_history
 
 # Prints one contact history
@@ -86,6 +93,7 @@ parser.add_argument("--only-changes", help='skip properties which have exactly o
 parser.add_argument("--sort-by", help='order input files by', choices=['filename', 'modified'], default='modified' )
 parser.add_argument("--version-by", help='what to use as a version identifier', choices=['filename', 'modified'], default='modified' )
 parser.add_argument("--group-by", help='group the results by', choices=['prop', 'ver'], default='prop' )
+parser.add_argument("--all-props", help='scan all database settings instead of the chosen few', action='store_true')
 args = parser.parse_args()
 coreutils.init(args)
 

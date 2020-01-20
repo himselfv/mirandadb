@@ -271,19 +271,19 @@ class DBContactSettings(DBStruct):
     
 	# Iteration
 	def __iter__(self):
-		return Iter(self, 0)
+		return self.Iter(self, 0)
 	class Iter:
 		def __init__(self, module, start=0):
 			self.module = module
-			self.idx = start-1
+			self.idx = start
 		def __iter__(self):
 			return self
-		def __next__(self):
+		def next(self):
 			if self.idx < len(self.module._settings):
 				self.idx += 1
 			else:
 				raise StopIteration()
-			return self.module._settings[self.idx]
+			return self.module._settings.values()[self.idx-1]
 
 
 class Bytes(str):
