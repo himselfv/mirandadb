@@ -51,11 +51,7 @@ def dump_events(db, contact):
 	print "Events for "+contact.display_name+": "
 	global bad_event_count
 	global bad_offsets
-	ofsEvent = contact.ofsFirstEvent
-	while ofsEvent <> 0:
-		event = db.read(mirandadb.DBEvent(), ofsEvent)
-		ofsEvent = event.ofsNext
-		data = db.decode_event_data(event)
+	for event in db.get_events(contact):
 		if isinstance(data, dict) and ('problem' in data):
 			bad_event_count += 1
 		if args.bad_events:
@@ -81,41 +77,44 @@ def compare_contacts(db1, db2, contact1, contact2):
 	# - Skip events on the lesser side until both sides are on the same second [anything missing from one side is missing]
 	# - Go over events, event by event
 	# - Print any remaining events in the longer chain
-	e1offset = contact1.ofsFirstEvent
-	e2offset = contact2.ofsFirstEvent
-	while (e1offset <> 0) or (e2offset <> 0):
-		e1 = db1.read_event(e1offset) if e1offset <> 0 else None
-		e2 = db2.read_event(e2offset) if e2offset <> 0 else None
+	events1 = db1.get_events(contact1)	# this handles metacontacts transparently
+	events2 = db2.get_events(contact2)
+	
+	i1 = 0
+	i2 = 0
+	while (i1 < len(events1)) or (i2 < len(events2)):
+		e1 = events1[i1] if i1 < len(events1) else None
+		e2 = events2[i2] if i2 < len(events2) else None
 
 		if (e1 == None) or ((e2 <> None) and (e1.timestamp > e2.timestamp)):
 			if args.print_new:
 				print "--DB1: " + mirandadb.format_event(db2, e2)
-			e2offset = e2.ofsNext
+			i2 += 1
 			continue
 		
 		if (e2 == None) or (e2.timestamp > e1.timestamp):
 			print "--DB2: " + mirandadb.format_event(db1, e1)
-			e1offset = e1.ofsNext
+			i1 += 1
 			continue
 		
 		# Collect all events for this second
 		timestamp = e1.timestamp
 		el1 = [e1]
 		el2 = [e2]
-		e1offset = e1.ofsNext
-		while e1offset <> 0:
-			e1 = db1.read_event(e1offset)
+		i1 += 1
+		while i1 < len(events1):
+			e1 = events1[i1]
 			if e1.timestamp <> timestamp:
 				break
 			el1.append(e1)
-			e1offset = e1.ofsNext
-		e2offset = e2.ofsNext
-		while e2offset <> 0:
-			e2 = db2.read_event(e2offset)
+			i1 += 1
+		i2 += 1
+		while i2 < len(events2):
+			e2 = events2[i2]
 			if e2.timestamp <> timestamp:
 				break
 			el2.append(e2)
-			e2offset = e2.ofsNext
+			i2 += 1
 		
 		compare_event_lists(db1, db2, el1, el2)
 

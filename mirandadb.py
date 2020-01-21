@@ -616,6 +616,11 @@ class MirandaDbxMmap(object):
 			module = self.read(DBModuleName(), ofsModule)
 			self._moduleNames[ofsModule] = module.name
 		return self._moduleNames[ofsModule]
+
+
+	#
+	# Contacts
+	#
 	
 	# Returns a list of all DBContact()s
 	_contacts = None
@@ -692,9 +697,38 @@ class MirandaDbxMmap(object):
 				continue
 		log.warning('entries: '+str(len(ret)))
 		return ret
-	
+
+
+	#
+	# Events
+	#
 	def read_event(self, offset):
 		return self.read(DBEvent(), offset)
+	
+	# Retrieves and decodes all events for the contact. Handles certain special cases transparently.
+	#	contact_id: Return only events for this contactId (MetaContacts can host multiple)
+	# TODO: We can make this into iterator to improve it a little
+	def get_events(self, contact, with_metacontacts=True, contactId=None):
+		events = []
+		if contact.ofsFirstEvent <> 0:
+			# Retrieve events stored under this contact
+			ofsEvent = contact.ofsFirstEvent
+			while ofsEvent <> 0:
+				event = self.read_event(ofsEvent)
+				ofsEvent = event.ofsNext
+				if (contactId <> None) and (event.contactID <> contactId):
+					continue
+				event.data = self.decode_event_data(event)
+				events.append(event)
+			return events
+		# MetaContacts can steal events from their children but leave contactId and moduleName intact
+		if (contact.eventCount > 0) and with_metacontacts:
+			metaId = contact.get_setting("MetaContacts", "ParentMeta")
+			metaContact = self.contact_by_id(metaId) if metaId <> None else None
+			if metaContact <> None:
+				contactId2 = contactId if contactId <> None else contact.dwContactID
+				return self.get_events(metaContact, contactId=contactId2)
+		return []
 	
 	# Returns either a string or something that can be vars()ed
 	def decode_event_data(self, event):
@@ -834,9 +868,9 @@ def dump_modules(db):
 
 def dump_settings(db, contact):
 	display_name = ''
-	if hasattr(contact, 'display_name'):
+	if hasattr(contact, 'display_name') and contact.display_name:
 		display_name = unicode(contact.display_name)
-	if hasattr(contact, 'protocol'):
+	if hasattr(contact, 'protocol') and contact.protocol:
 		display_name += ' ('+contact.protocol+')'
 	print display_name
 	for name in contact.settings:
