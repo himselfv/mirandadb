@@ -162,34 +162,61 @@ def compare_events(db1, db2, e1, e2):
 	return fail
 
 
-# Main
-parser = argparse.ArgumentParser(description="Compares two snapshots of **the same** Miranda database, looking for changed, added or deleted events.",
-	parents=[coreutils.argparser()])
-parser.add_argument("dbname1", help='path to older database file')
-parser.add_argument("dbname2", help='path to newer database file')
-parser.add_argument("--print-new", help='finds NEW events in addition to changed or missing events', action='store_true')
-args = parser.parse_args()
-coreutils.init(args)
+def contact_by_id(contacts, id):
+	for contact in contacts:
+		if contact.dwContactID == id:
+			return contact
+	return None
 
-db1 = mirandadb.MirandaDbxMmap(args.dbname1)
-db2 = mirandadb.MirandaDbxMmap(args.dbname2)
+# Returns a dict with matched, missing and new contacts
+def compare_contact_lists(contacts1 = None, contacts2 = None):
+	ret = {}
+	ret['match'] = []					# A list of (contact1, contact2) pairs
+	ret['missing1'] = contacts1[:]		# Missing from contacts1
+	ret['missing2'] = contacts2[:]		# Missing from contacts2
+	missing_contact1 = []
+	for contact1 in contacts1:
+		contact2 = contact_by_id(contacts2, contact1.dwContactID)
+		if contact2 <> None:
+			ret['match'].append((contact1, contact2))
+			ret['missing1'].remove(contact1)
+			ret['missing2'].remove(contact2)
+	return ret
 
-contacts1 = db1.contacts()
-contacts2 = db2.contacts()
-missing_contacts1 = []
 
-compare_contacts(db1, db2, db1.user, db2.user)
-for contact1 in contacts1:
-	contact2 = db2.contact_by_id(contact1.dwContactID)
-	if contact2 <> None:
-		contacts2.remove(contact2)
-		compare_contacts(db1, db2, contact1, contact2)
+def main():
+	parser = argparse.ArgumentParser(description="Compares two snapshots of **the same** Miranda database, looking for changed, added or deleted events.",
+		parents=[coreutils.argparser()])
+	parser.add_argument("dbname1", help='path to older database file')
+	parser.add_argument("dbname2", help='path to newer database file')
+	parser.add_argument("--print-new", help='finds NEW events in addition to changed or missing events', action='store_true')
+	parser.add_argument("--contact", help='diff only this contact', type=str)
+	global args
+	args = parser.parse_args()
+	coreutils.init(args)
+
+	db1 = mirandadb.MirandaDbxMmap(args.dbname1)
+	db2 = mirandadb.MirandaDbxMmap(args.dbname2)
+
+	if args.contact:
+		contacts1 = db1.contacts_by_mask(args.contact)
+		contacts2 = db2.contacts_by_mask(args.contact)
 	else:
-		missing_contacts1.append(contact1)
+		contacts1 = db1.contacts()
+		contacts2 = db2.contacts()
 
-print "The following contacts from DB1 are missing:"
-for contact1 in missing_contacts1:
-	print contact1.display_name
-print "The following contacts in DB2 are new:"
-for contact2 in contacts2:
-	print contact2.display_name
+	cmp = compare_contact_lists(contacts1, contacts2)
+	print "The following contacts from DB1 are missing:"
+	for contact1 in cmp['missing1']:
+		print contact1.display_name
+	print "The following contacts in DB2 are new:"
+	for contact2 in cmp['missing2']:
+		print contact2.display_name
+
+	if not args.contact: # explicitly compare one db.user against another
+		compare_contacts(db1, db2, db1.user, db2.user)
+	for (contact1, contact2) in cmp['match']:
+		compare_contacts(db1, db2, contact1, contact2)
+
+if __name__ == "__main__":
+	sys.exit(main())
