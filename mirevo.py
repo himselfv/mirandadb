@@ -75,8 +75,9 @@ def contact_evo_print(contact_history):
 			for rev in revs:
 				print rev[0]+u"\t"+prop + u"\t\t" + unicode(rev[1])
 	else:
-		for ver in contact_history.props_by_ver:
-			revs = contact_history.props_by_ver[ver]
+		# Sort by version
+		props2 = sorted([(ver, contact_history.props_by_ver[ver]) for ver in contact_history.props_by_ver])
+		for (ver, revs) in props2:
 			for rev in revs:
 				if args.only_changes and not contact_history.prop_has_changes(rev[0]):
 					continue
