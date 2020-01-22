@@ -794,48 +794,40 @@ class MirandaDbxMmap(object):
 		#  * ANSI locale may CHANGE BETWEEN MESSAGES (if you changed your PC locale in the past)
 		#  * For all of ANSI, UTF-8 and UTF-16, we must trim terminating NULLs, or they'll be decode()d as characters.
 		if _unicode:
-			# UTF-8 has internal nulls so we can only trim the final \0 without looking into it
-			# Thankfully, UTF-8 has no "UTF16 tail", so the only problem would be additional data which is rare
-			blob = utfutils.removeterm0(event.blob)
+			(blob, tail) = utfutils.eatutf8(event.blob)
 			ret = self.utf8trydecode(blob)
 		else:
-			# Some ANSI MBCS may also have internall NULLs but not knowing the encoding, we are fucked.
-			# So let's assume they don't. (Most don't)
-			parts = event.blob.split('\0', 1)
-			blob = parts.pop(0)
+			(blob, tail) = utfutils.eatansi(event.blob)
 			ret = self.mbcstrydecode(blob)		# The ANSI version
-			if len(parts) > 0:
-				# The tail may contain "UTF-16 version", "additional data" and "junk" and there's no flag to tell which is which
-				# But the common code that added UTF-16 always added EXACTLY twice the ANSI bytes (even if multibyte ANSI required less),
-				# so that's a pretty good indicator
-				# We may also have MORE than that, and we may have accidental exact match for short messages,
-				# but we'll ignore both possibilities for now (too rare in practice to study them)
-		 		if (len(parts[0]) == 2*len(blob)+2):	# +2b non-removed null
-		 			# We have to remove term \0\0, but the string may be shorter (if ANSI had been MBCS and required less than twice the size)
-		 			utf16parts = parts.pop(0).split('\0\0', 1)
-		 			utf16text = self.utf16trydecode(utf16parts.pop(0))
-		 			
-		 			# A tail remains. This may be a case of UTF-16 over-allocation (see above),
-		 			# or there may still be something to process. Put it back into parts.
-		 			if len(utf16parts) > 0:
-		 				parts.append(utf16parts.pop(0))
-		 			
-		 			# We can't verify UTF16==ANSI version with certainty because:
-		 			#  * ANSI may not be in our current locale
-		 			#  * Even if it were, ANSI can't encode everything Unicode can
-		 			# But we can check that at least it's not an obvious failure
-		 			print repr(utf16text)
-		 			if len(utf16text['text']) < len(ret['text']) / 2:
-		 				log.warning('Non-UNICODE event text UTF16 tail decoding failure: the decoded text doesn''t match ANSI at all')
-		 				ret['problem'] = 'UTF16 tail doesn''t match'
-		 				ret['utf16'] = utf16text['text']
-		 			else:
-		 				# Otherwise replace
-		 				utf16text['ansi'] = ret['text']
-		 				ret = utf16text
-			if (len(parts) > 0) and (len(parts[0]) > 0):
+			# The tail may contain "UTF-16 version", "additional data" and "junk" and there's no flag to tell which is which
+			# But the common code that added UTF-16 always added EXACTLY twice the ANSI bytes (even if multibyte ANSI required less),
+			# so that's a pretty good indicator
+			# We may also have MORE than that, and we may have accidental exact match for short messages,
+			# but we'll ignore both possibilities for now (too rare in practice to study them)
+			if (len(tail) > 0) and (len(parts[0]) == 2*len(blob)+2): # +2b non-removed null
+	 			# Actual UTF16 string may be shorter due to UTF-16 over-allocation (if ANSI had been MBCS and required less than twice the size)
+	 			(utf16text, tail) = utfutils.eatutf16(tail)
+	 			utf16text = self.utf16trydecode(utf16text)
+	 			
+	 			if 'problem' in utf16text:
+	 				ret['utf16_problem'] = utf16text['problem']
+	 				if not ('problem' in ret):
+	 					ret['problem'] = 'Problem with UTF16 text'
+	 			# We can't verify UTF16==ANSI because:
+	 			#  * ANSI may not be in our current locale
+	 			#  * ANSI can't encode everything Unicode can
+	 			# But we can check that at least it's not an obvious failure
+	 			elif (len(utf16text['text']) < len(ret['text']) / 2):
+	 				ret['problem'] = 'UTF16 tail doesn''t match at all'
+	 				ret['utf16'] = utf16text['text']
+	 			else:
+	 				# Otherwise replace
+	 				utf16text['ansi'] = ret['text']
+	 				ret = utf16text
+		if len(tail) > 0:
+			ret['remainder'] = tail.encode('hex')
+			if not ('problem' in ret):
 				ret['problem'] = "Remainder data in event"
-				ret['remainder'] = parts[0].encode('hex')
 		ret['unicode'] = _unicode
 		if 'problem' in ret:
 			log.warning('Event@'+str(event.offset)+': '+ret['problem'])
@@ -1010,7 +1002,7 @@ def event_stats_contact(db, contact, stats):
 # Produces a pretty line describing the event
 def format_event(db, event, data = None):
 	if data == None:
-		if event.data <> None:	# Some events have pre-decoded data
+		if hasattr(event, 'data') and (event.data <> None):	# Some events have pre-decoded data
 			data = event.data
 		else:
 			data = db.decode_event_data(event)
@@ -1029,7 +1021,7 @@ def dump_events(db, contact, params):
 			return True
 		if params['unsupported_only'] and isinstance(data, dict) and (data.get('type', None) in ['unsupported', 'encrypted']):
 			return True
-		return not (params['bad_only'] or params['events_only'])
+		return not (params['bad_only'] or params['unsupported_only'])
 	print "Events for "+contact.display_name+": "
 	for event in db.get_events(contact):
 		data = event.data

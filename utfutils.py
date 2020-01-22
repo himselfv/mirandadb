@@ -5,19 +5,33 @@ import argparse
 
 log = logging.getLogger('utf')
 
-# UTF-8 and ASCII
-def removeterm0(utf_str):
-	if utf_str[-1:] == "\0":
-		return utf_str[:-1]
-	else:
-		return utf_str
 
-# UTF-16
-def utf16removeterm0(utf16_str):
-	if utf16_str[-2:] == "\0\0":
-		return utf16_str[:-2]
-	else:
-		return utf16_str
+# Reads ANSI-MBCS/UTF8/UTF16 string from a buffer of bytes, until the terminating null or that buffer's end.
+# Returns a pair of bytes:
+#   (string, remainder)
+# The remainder is empty if there's no data left.
+def eatansi(buf):
+	# Most ANSI character sets are single-byte, can't contain \0. Even most MBCS don't support internal \0s.
+	# Some in theory can, but not knowing the encoding, we're fucked. So let's assume they don't.
+	return eatutf8(buf)	# Same handling
+
+def eatutf8(buf):
+	# No code point in UTF-8 can contain \0, so this is fine:
+	parts = buf.split('\0', 1)
+	if len(parts) < 2:
+		parts.append('')
+	return parts
+
+def eatutf16(buf):
+	# UTF16 string ends with \0\0 but it must come at a 2-byte mark
+	for i in range(0, len(buf) // 2):
+		if (buf[2*i]=='\0') and (buf[2*i+1]=='\0'):
+			if i <= 0:
+				return ('', buf[2:])
+			else:
+				return (buf[0:2*i-1], buf[2*i+2:])
+	return (buf, '')
+
 
 # Converts u'' utf16 string (a sequence of 2-byte characters), splitting each character into 2 bytes
 def utf16bytes(str):
