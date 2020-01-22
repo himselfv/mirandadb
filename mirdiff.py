@@ -9,65 +9,6 @@ import fnmatch
 
 log = logging.getLogger('mirdiff')
 
-# Enhances MirandaDbxMmap with some data scan/restore capabilities
-class MirandaDbxMmapChk(mirandadb.MirandaDbxMmap):
-	def utf8trydecode(self, data):
-		ret = super(MirandaDbxMmapChk, self).utf8trydecode(data)
-		if 'problem' in ret:
-			return ret
-		
-		# Verify that the text looks like valid UTF16 after decoding
-		test = utfutils.utf16test(ret['text'])
-		if test == True:
-			return ret
-		ret['problem'] = test
-		ret['utf8'] = data.encode('hex')
-		text_bytes = utfutils.utf16bytes(ret['text'])
-		ret['utf16'] = text_bytes.encode('hex')
-		ret['text'] = None # remove text to indicate problems
-		
-		"""
-		# There are some cases where DECODED utf16 contains utf8!
-		# Let's try to analyze this
-		try:
-			# This may again end with \0
-			text_bytes = utfutils.removeterm0(text_bytes)
-			text2 = text2_bytes.decode('utf-8')
-		except UnicodeDecodeError as err:
-			text2 = "Doubly decode failed: "+str(err)
-		else:
-			ret2 = utfutils.utf16test(text2)
-			if ret2 == True:
-				return (False, text2, 'Doubly encoded utf8!')
-		# Doesn't seem to be the case; just return the original attempt
-		"""
-		return ret
-
-
-bad_event_count = 0
-bad_offsets = {}		# Bad event offset statistics
-
-def dump_events(db, contact):
-	print "Events for "+contact.display_name+": "
-	global bad_event_count
-	global bad_offsets
-	for event in db.get_events(contact):
-		if isinstance(data, dict) and ('problem' in data):
-			bad_event_count += 1
-		if args.bad_events:
-			if not isinstance(data, dict):
-				continue
-			if not ('problem' in data):
-				continue
-		if args.bad_offsets:
-			data['offset'] = event.offset
-			bad_offset = event.offset // 0x10000
-			if bad_offset in bad_offsets:
-				bad_offsets[bad_offset] += 1
-			else:
-				bad_offsets[bad_offset] = 1
-		print mirandadb.format_event(db, event, data)
-
 # Compares two contacts event by event
 def compare_contacts(db1, db2, contact1, contact2):
 	print ("Comparing "+contact1.display_name+" (#"+str(contact1.contactID)+")"
