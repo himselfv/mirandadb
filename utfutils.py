@@ -5,11 +5,19 @@ import argparse
 
 log = logging.getLogger('utf')
 
+# UTF-8 and ASCII
 def removeterm0(utf_str):
 	if utf_str[-1:] == "\0":
 		return utf_str[:-1]
 	else:
 		return utf_str
+
+# UTF-16
+def utf16removeterm0(utf16_str):
+	if utf16_str[-2:] == "\0\0":
+		return utf16_str[:-2]
+	else:
+		return utf16_str
 
 # Converts u'' utf16 string (a sequence of 2-byte characters), splitting each character into 2 bytes
 def utf16bytes(str):

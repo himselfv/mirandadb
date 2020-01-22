@@ -782,33 +782,60 @@ class MirandaDbxMmap(object):
 	
 	# Decodes event data as simple string
 	def decode_event_data_string(self, event, _unicode):
-		# Both ASCII and UTF-8 events may have terminating null which we should remove,
-		# or it'll be decoded into text
+		# Most event blobs are strings in one of the THREE formats:
+		#  1. UTF-8 only 			modern/old when posted with PREF_UTF
+		#  2. ANSI + UTF-16LE		old db, when posted with PREF_UNICODE
+		#  3. ANSI only				old db, when posted with no PREF_*
+		# With any format, there may be:
+		#  - additional data, as defined by protocol
+		#  - extra space, if preallocated
+		# Note:
+		#  * ANSI locale may be MULTIBYTE (e.g. shift-jis)
+		#  * ANSI locale may CHANGE BETWEEN MESSAGES (if you changed your PC locale in the past)
+		#  * For all of ANSI, UTF-8 and UTF-16, we must trim terminating NULLs, or they'll be decode()d as characters.
 		if _unicode:
-			# UTF-8 has internal nulls so we can only trim the final one easily
+			# UTF-8 has internal nulls so we can only trim the final \0 without looking into it
+			# Thankfully, UTF-8 has no "UTF16 tail", so the only problem would be additional data which is rare
 			blob = utfutils.removeterm0(event.blob)
 			ret = self.utf8trydecode(blob)
 		else:
-			# ASCII may not have internal nulls at all, but event blobs may contain reserved space
-			# or even non-standard additional data
+			# Some ANSI MBCS may also have internall NULLs but not knowing the encoding, we are fucked.
+			# So let's assume they don't. (Most don't)
 			parts = event.blob.split('\0', 1)
 			blob = parts.pop(0)
-			ret = None
-			# ICQ protocol is known to had been attaching UTF-16 to non-unicode events
-			if self.get_base_proto(event.ofsModuleName) == "ICQ":
-				if len(parts) > 0:
-					print len(blob)
-					print len(parts[0])
-					# some safety against accidental mismatches
-					# first part is ascii/local (1 byte chars), second part is UTF-16 (2 byte chars almost always),
-					# so should be precisely twice the size (+ 2b term null in second case)
-			 		if (len(parts[0]) == 2*len(blob)+2):
-			 			ret = self.utf16trydecode(parts[0])
-			 			parts.pop(0)
-			if ret == None:
-				ret = self.mbcstrydecode(blob)
-				if (len(parts) > 0) and (len(parts[0]) > 0):
-					ret['problem'] = "Remainder data in event"
+			ret = self.mbcstrydecode(blob)		# The ANSI version
+			if len(parts) > 0:
+				# The tail may contain "UTF-16 version", "additional data" and "junk" and there's no flag to tell which is which
+				# But the common code that added UTF-16 always added EXACTLY twice the ANSI bytes (even if multibyte ANSI required less),
+				# so that's a pretty good indicator
+				# We may also have MORE than that, and we may have accidental exact match for short messages,
+				# but we'll ignore both possibilities for now (too rare in practice to study them)
+		 		if (len(parts[0]) == 2*len(blob)+2):	# +2b non-removed null
+		 			# We have to remove term \0\0, but the string may be shorter (if ANSI had been MBCS and required less than twice the size)
+		 			utf16parts = parts.pop(0).split('\0\0', 1)
+		 			utf16text = self.utf16trydecode(utf16parts.pop(0))
+		 			
+		 			# A tail remains. This may be a case of UTF-16 over-allocation (see above),
+		 			# or there may still be something to process. Put it back into parts.
+		 			if len(utf16parts) > 0:
+		 				parts.append(utf16parts.pop(0))
+		 			
+		 			# We can't verify UTF16==ANSI version with certainty because:
+		 			#  * ANSI may not be in our current locale
+		 			#  * Even if it were, ANSI can't encode everything Unicode can
+		 			# But we can check that at least it's not an obvious failure
+		 			print repr(utf16text)
+		 			if len(utf16text['text']) < len(ret['text']) / 2:
+		 				log.warning('Non-UNICODE event text UTF16 tail decoding failure: the decoded text doesn''t match ANSI at all')
+		 				ret['problem'] = 'UTF16 tail doesn''t match'
+		 				ret['utf16'] = utf16text['text']
+		 			else:
+		 				# Otherwise replace
+		 				utf16text['ansi'] = ret['text']
+		 				ret = utf16text
+			if (len(parts) > 0) and (len(parts[0]) > 0):
+				ret['problem'] = "Remainder data in event"
+				ret['remainder'] = parts[0].encode('hex')
 		ret['unicode'] = _unicode
 		if 'problem' in ret:
 			log.warning('Event@'+str(event.offset)+': '+ret['problem'])
@@ -818,13 +845,8 @@ class MirandaDbxMmap(object):
 	def mbcstrydecode(self, data):
 		ret = {}
 		try:
-			# event blobs may contain empty space or more non-standard data,
-			# and decode('mbcs') won't stop at null, so do it manually
-			parts = data.split('\0', 1)
-			ret['text'] = parts[0].decode('mbcs')
-			ret['mbcs'] = data.encode('hex')
-			if (len(parts) > 1) and (len(parts[1]) > 0):
-				ret['problem'] = "Remainder data in event"
+			ret['text'] = data.decode('mbcs')
+			ret['mbcs'] = data.encode('hex') # TODO: remove
 		except DecodeError:
 			ret['problem'] = "Cannot decode as mbcs"
 			ret['mbcs'] = data.encode('hex')
@@ -846,8 +868,9 @@ class MirandaDbxMmap(object):
 	def utf16trydecode(self, data):
 		ret = {}
 		try:
-			text = data.decode('utf-16')
+			text = data.decode('utf-16le')	# LE, so that it doesn't eat bom, if it's present
 			ret['text'] = text
+			ret['utf16'] = data.encode('hex') # TODO: remove
 		except UnicodeDecodeError:
 			ret['problem'] = "Cannot decode as utf-16"
 			ret['utf16'] = data.encode('hex')
