@@ -707,6 +707,9 @@ class MirandaDbxMmap(object):
 	
 	# Retrieves and decodes all events for the contact. Handles MetaContacts transparently.
 	#	contact_id: Return only events for this contactId (MetaContacts can host multiple)
+	#	with_metacontacts: Locate this contact events in MetaContacts too.
+	#		This may be slower than printing out the entire MetaContact once,
+	#		because EVERY subcontact will iterate ALL metacontact events, filtering them.
 	def get_events(self, contact, with_metacontacts=True, contactId=None):
 		# MetaContacts can steal events from their children but leave contactId and moduleName intact
 		if (contact.ofsFirstEvent == 0) and (contact.eventCount > 0) and with_metacontacts:
@@ -716,7 +719,7 @@ class MirandaDbxMmap(object):
 				contactId2 = contactId if contactId <> None else contact.contactID
 				return self.EventIter(self, metaContact.ofsFirstEvent, contactId=contactId2)
 		# If this is a MetaContact itself, skip events not directly owned by it
-		if (contact.protocol == "MetaContacts") and (contactId == None):
+		if with_metacontacts and (contact.protocol == "MetaContacts") and (contactId == None):
 			contactId = contact.contactID
 		return self.EventIter(self, contact.ofsFirstEvent, contactId)
 	class EventIter:
