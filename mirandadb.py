@@ -937,7 +937,10 @@ def event_stats_contact(db, contact, stats):
 # Produces a pretty line describing the event
 def format_event(db, event, data = None):
 	if data == None:
-		data = db.decode_event_data(event)
+		if event.data <> None:	# Some events have pre-decoded data
+			data = event.data
+		else:
+			data = db.decode_event_data(event)
 	# Stringify data
 	if isinstance(data, basestring):
 		pass
