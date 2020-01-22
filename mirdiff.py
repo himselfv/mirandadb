@@ -70,8 +70,8 @@ def dump_events(db, contact):
 
 # Compares two contacts event by event
 def compare_contacts(db1, db2, contact1, contact2):
-	print ("Comparing "+contact1.display_name+" (#"+str(contact1.dwContactID)+")"
-		+" and "+contact2.display_name+" (#"+str(contact2.dwContactID)+")...")
+	print ("Comparing "+contact1.display_name+" (#"+str(contact1.contactID)+")"
+		+" and "+contact2.display_name+" (#"+str(contact2.contactID)+")...")
 	# Events must be time-ordered and are timed with seconds precision.
 	# - Start with the beginning.
 	# - Skip events on the lesser side until both sides are on the same second [anything missing from one side is missing]
@@ -163,7 +163,7 @@ def compare_events(db1, db2, e1, e2):
 
 def contact_by_id(contacts, id):
 	for contact in contacts:
-		if contact.dwContactID == id:
+		if contact.contactID == id:
 			return contact
 	return None
 
@@ -175,7 +175,7 @@ def compare_contact_lists(contacts1 = None, contacts2 = None):
 	ret['missing2'] = contacts2[:]		# Missing from contacts2
 	missing_contact1 = []
 	for contact1 in contacts1:
-		contact2 = contact_by_id(contacts2, contact1.dwContactID)
+		contact2 = contact_by_id(contacts2, contact1.contactID)
 		if contact2 <> None:
 			ret['match'].append((contact1, contact2))
 			ret['missing1'].remove(contact1)

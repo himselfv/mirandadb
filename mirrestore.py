@@ -51,11 +51,8 @@ def dump_events(db, contact):
 	print "Events for "+contact.display_name+": "
 	global bad_event_count
 	global bad_offsets
-	ofsEvent = contact.ofsFirstEvent
-	while ofsEvent <> 0:
-		event = db.read(mirandadb.DBEvent(), ofsEvent)
-		ofsEvent = event.ofsNext
-		data = db.decode_event_data(event)
+	for event in db.get_events(contact):
+		data = event.data
 		if isinstance(data, dict) and ('problem' in data):
 			bad_event_count += 1
 		if args.bad_events:

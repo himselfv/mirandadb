@@ -48,9 +48,9 @@ class ContactHistory(object):
 def contact_evo_update(contact_histories, db):
 	ver = db_get_version(db)
 	for contact in db.contacts():
-		contact_history = contact_histories.get(contact.dwContactID, None)
+		contact_history = contact_histories.get(contact.contactID, None)
 		if contact_history == None:
-			contact_history = ContactHistory(contact.dwContactID)
+			contact_history = ContactHistory(contact.contactID)
 		# Add all properties which we track
 		if not args.all_props:
 			contact_history.add_prop(ver, 'id', contact.id)
@@ -62,7 +62,7 @@ def contact_evo_update(contact_histories, db):
 				for setting in module:
 					contact_history.add_prop(ver, moduleName+'\\'+setting.name, setting.value)
 			
-		contact_histories[contact.dwContactID] = contact_history
+		contact_histories[contact.contactID] = contact_history
 
 # Prints one contact history
 def contact_evo_print(contact_history):

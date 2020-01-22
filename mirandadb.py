@@ -133,7 +133,7 @@ class DBContact(DBStruct):
 		self.ofsLastEvent,
 		self.ofsFirstUnread,
 		self.tsFirstUnread,
-		self.dwContactID
+		self.contactID
 		) = tuple
 
 	def __str__(self):
@@ -146,7 +146,7 @@ class DBContact(DBStruct):
 			'ofsLastEvent': self.ofsLastEvent,
 			'ofsFirstUnread': self.ofsFirstUnread,
 			'tsFirstUnread': self.tsFirstUnread,
-			'dwContactID': self.dwContactID
+			'contactID': self.contactID
 		})
 
 	# Expands some data by seeking and reading it from file:
@@ -648,7 +648,7 @@ class MirandaDbxMmap(object):
 		if contact.display_name == None:
 			contact.display_name = contact.nick
 		if contact.display_name == None:
-			contact.display_name = u'#'+unicode(contact.dwContactID);
+			contact.display_name = u'#'+unicode(contact.contactID);
 		if contact.protocol <> None:
 			contact.display_name = contact.protocol + u'\\' + contact.display_name
 		# Guess stable ID for some common protocols
@@ -661,12 +661,12 @@ class MirandaDbxMmap(object):
 		else:
 			contact.id = None
 	
-	# Returns a contact by its database dwContactID
+	# Returns a contact by its database contactID
 	def contact_by_id(self, id):
 		if id == 0:
 			return self.user
 		for contact in self.contacts():
-			if contact.dwContactID == id:
+			if contact.contactID == id:
 				return contact
 		return None
 	
@@ -692,7 +692,7 @@ class MirandaDbxMmap(object):
 			if contact.id and fnmatch.fnmatch((contact.protocol+u'\\'+str(contact.id)).lower(), contact_mask):
 				ret.append(contact)
 				continue
-			if '#'+str(contact.dwContactID) == contact_mask:
+			if '#'+str(contact.contactID) == contact_mask:
 				ret.append(contact)
 				continue
 		log.warning('entries: '+str(len(ret)))
@@ -705,30 +705,36 @@ class MirandaDbxMmap(object):
 	def read_event(self, offset):
 		return self.read(DBEvent(), offset)
 	
-	# Retrieves and decodes all events for the contact. Handles certain special cases transparently.
+	# Retrieves and decodes all events for the contact. Handles MetaContacts transparently.
 	#	contact_id: Return only events for this contactId (MetaContacts can host multiple)
-	# TODO: We can make this into iterator to improve it a little
 	def get_events(self, contact, with_metacontacts=True, contactId=None):
-		events = []
-		if contact.ofsFirstEvent <> 0:
-			# Retrieve events stored under this contact
-			ofsEvent = contact.ofsFirstEvent
-			while ofsEvent <> 0:
-				event = self.read_event(ofsEvent)
-				ofsEvent = event.ofsNext
-				if (contactId <> None) and (event.contactID <> contactId):
-					continue
-				event.data = self.decode_event_data(event)
-				events.append(event)
-			return events
 		# MetaContacts can steal events from their children but leave contactId and moduleName intact
-		if (contact.eventCount > 0) and with_metacontacts:
+		if (contact.ofsFirstEvent == 0) and (contact.eventCount > 0) and with_metacontacts:
 			metaId = contact.get_setting("MetaContacts", "ParentMeta")
 			metaContact = self.contact_by_id(metaId) if metaId <> None else None
 			if metaContact <> None:
-				contactId2 = contactId if contactId <> None else contact.dwContactID
-				return self.get_events(metaContact, contactId=contactId2)
-		return []
+				contactId2 = contactId if contactId <> None else contact.contactID
+				return self.EventIter(self, metaContact.ofsFirstEvent, contactId=contactId2)
+		# If this is a MetaContact itself, skip events not directly owned by it
+		if (contact.protocol == "MetaContacts") and (contactId == None):
+			contactId = contact.contactID
+		return self.EventIter(self, contact.ofsFirstEvent, contactId)
+	class EventIter:
+		def __init__(self, db, ofsFirstEvent, contactId=None):
+			self.db = db
+			self.offset = ofsFirstEvent
+			self.contactId = contactId
+		def __iter__(self):
+			return self
+		def next(self):
+			while True and self.offset <> 0:
+				event = self.db.read_event(self.offset)
+				self.offset = event.ofsNext if event <> None else 0
+				if (event == None) or (self.contactId == None) or (event.contactID == self.contactId):
+					break
+			if self.offset == 0: raise StopIteration()
+			event.data = self.db.decode_event_data(event)
+			return event
 	
 	# Returns either a string or something that can be vars()ed
 	def decode_event_data(self, event):
@@ -848,7 +854,7 @@ def dump_contacts(db):
 		print unicode(contact.display_name)
 		print u"  Protocol: "+unicode(contact.protocol)
 		print u"  ID: "+unicode(contact.id)
-		print u"  Contact ID: #"+unicode(contact.dwContactID)
+		print u"  Contact ID: #"+unicode(contact.contactID)
 		print u"  Nick: "+unicode(contact.nick)
 		print u"  MyHandle: "+unicode(contact.get_setting('CList', 'MyHandle'))
 		print u"  Group: "+unicode(contact.get_setting('CList', 'Group'))
@@ -938,11 +944,8 @@ def format_event(db, event, data = None):
 
 def dump_events(db, contact, params):
 	print "Events for "+contact.display_name+": "
-	ofsEvent = contact.ofsFirstEvent
-	while ofsEvent <> 0:
-		event = db.read_event(ofsEvent)
-		ofsEvent = event.ofsNext
-		data = db.decode_event_data(event)
+	for event in db.get_events(contact):
+		data = event.data
 		if params['bad_only']:
 			if not isinstance(data, dict):
 				continue
