@@ -76,8 +76,10 @@ def compare_event_lists(db1, db2, el1, el2):
 		if e2 == None:
 			el1_missing.append(e1)
 	for e1 in el1_missing:
+		e1['size'] = event.cbSize
 		print "!-DB2: "+mirandadb.format_event(db1, e1)
 	for e2 in el2:
+		e2['size'] = event.cbSize
 		print "!-DB1: "+mirandadb.format_event(db2, e2)
 
 

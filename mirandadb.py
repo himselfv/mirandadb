@@ -815,7 +815,8 @@ def main():
 	parser.add_argument("--dump-settings", help='prints all settings for the given contact', type=str, action='append')
 	parser.add_argument("--event-stats", help='collects event statistics', action='store_true')
 	parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
-	parser.add_argument("--bad-events", help='dumps bad events only', action='store_true')
+	parser.add_argument("--bad-events", help='dumps only bad events', action='store_true')
+	parser.add_argument("--unsupported-events", help='dumps only unsupported events', action='store_true')
 	args = parser.parse_args()
 	coreutils.init(args)
 	
@@ -838,6 +839,7 @@ def main():
 	if args.dump_events:
 		params = {}
 		params['bad_only'] = args.bad_events
+		params['unsupported_only'] = args.unsupported_events
 		for contact_name in args.dump_events:
 			for contact in db.contacts_by_mask(contact_name):
 				dump_events(db, contact, params)
@@ -946,15 +948,19 @@ def format_event(db, event, data = None):
 	return str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
 
 def dump_events(db, contact, params):
+	def should_print_event(event):
+		if params['bad_only'] and isinstance(data, dict) and ('problem' in data):
+			return True
+		if params['unsupported_only'] and isinstance(data, dict) and (data.get('type', None) in ['unsupported', 'encrypted']):
+			return True
+		return not (params['bad_only'] or params['events_only'])
 	print "Events for "+contact.display_name+": "
 	for event in db.get_events(contact):
 		data = event.data
-		if params['bad_only']:
-			if not isinstance(data, dict):
-				continue
-			if not ('problem' in data):
-				continue
+		if 'problem' in data:
 			data['offset'] = event.offset
+		if not should_print_event(event):
+			continue
 		print format_event(db, event, data)
 
 if __name__ == "__main__":
