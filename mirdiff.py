@@ -18,44 +18,39 @@ def compare_contacts(db1, db2, contact1, contact2):
 	# - Skip events on the lesser side until both sides are on the same second [anything missing from one side is missing]
 	# - Go over events, event by event
 	# - Print any remaining events in the longer chain
-	events1 = db1.get_events(contact1)	# this handles metacontacts transparently
-	events2 = db2.get_events(contact2)
+	events1 = iter(db1.get_events(contact1))	# this handles metacontacts transparently
+	events2 = iter(db2.get_events(contact2))
 	
-	i1 = 0
-	i2 = 0
-	while (i1 < len(events1)) or (i2 < len(events2)):
-		e1 = events1[i1] if i1 < len(events1) else None
-		e2 = events2[i2] if i2 < len(events2) else None
-
+	e1 = next(events1, None)
+	e2 = next(events2, None)
+	while (e1 <> None) or (e2 <> None):
 		if (e1 == None) or ((e2 <> None) and (e1.timestamp > e2.timestamp)):
 			if args.print_new:
 				print "--DB1: " + mirandadb.format_event(db2, e2)
-			i2 += 1
+			e2 = next(events2, None)
 			continue
 		
 		if (e2 == None) or (e2.timestamp > e1.timestamp):
 			print "--DB2: " + mirandadb.format_event(db1, e1)
-			i1 += 1
+			e1 = next(events1, None)
 			continue
 		
 		# Collect all events for this second
 		timestamp = e1.timestamp
 		el1 = [e1]
 		el2 = [e2]
-		i1 += 1
-		while i1 < len(events1):
-			e1 = events1[i1]
+		e1 = next(events1, None)
+		while e1 <> None:
 			if e1.timestamp <> timestamp:
 				break
 			el1.append(e1)
-			i1 += 1
-		i2 += 1
-		while i2 < len(events2):
-			e2 = events2[i2]
+			e1 = next(events1, None)
+		e2 = next(events2, None)
+		while e2 <> None:
 			if e2.timestamp <> timestamp:
 				break
 			el2.append(e2)
-			i2 += 1
+			e2 = next(events2, None)
 		
 		compare_event_lists(db1, db2, el1, el2)
 
