@@ -9,6 +9,29 @@ import fnmatch
 
 log = logging.getLogger('mirdiff')
 
+
+def contact_by_id(contacts, id):
+	for contact in contacts:
+		if contact.contactID == id:
+			return contact
+	return None
+
+# Returns a dict with matched, missing and new contacts
+def compare_contact_lists(contacts1 = None, contacts2 = None):
+	ret = {}
+	ret['match'] = []					# A list of (contact1, contact2) pairs
+	ret['missing1'] = contacts1[:]		# Missing from contacts1
+	ret['missing2'] = contacts2[:]		# Missing from contacts2
+	missing_contact1 = []
+	for contact1 in contacts1:
+		contact2 = contact_by_id(contacts2, contact1.contactID)
+		if contact2 <> None:
+			ret['match'].append((contact1, contact2))
+			ret['missing1'].remove(contact1)
+			ret['missing2'].remove(contact2)
+	return ret
+
+
 # Compares two contacts event by event
 def compare_contacts(db1, db2, contact1, contact2):
 	print ("Comparing "+contact1.display_name+" (#"+str(contact1.contactID)+")"
@@ -54,12 +77,17 @@ def compare_contacts(db1, db2, contact1, contact2):
 		
 		compare_event_lists(db1, db2, el1, el2)
 
-
 def compare_find_event(db1, db2, e1, el2):
+	f_candidates = []
 	for e2 in el2:
 		fail = compare_events(db1, db2, e1, e2)
 		if fail == "":
 			return e2
+		# It's okay for flags to be different though we would prefer them to match
+		if fail == "f":
+			f_candidates.append(e2)
+	if len(f_candidates) > 0:
+		return f_candidates[0]
 	return None
 
 # Compares two event lists, tries to find a match for every message
@@ -82,7 +110,6 @@ def compare_event_lists(db1, db2, el1, el2):
 		e2.data['size'] = e2.cbBlob
 		print "!-DB1: "+mirandadb.format_event(db2, e2, e2.data)
 
-
 # Compares two events, returns their difference mask
 def compare_events(db1, db2, e1, e2):
 	fail = ""
@@ -90,35 +117,16 @@ def compare_events(db1, db2, e1, e2):
 		fail += "i"
 	if db1.get_module_name(e1.ofsModuleName) <> db2.get_module_name(e2.ofsModuleName):
 		fail += "m"
-	if e1.flags <> e2.flags:
-		fail += "f"
 	if e1.eventType <> e2.eventType:
 		fail += "t"
-	if e1.blob <> e2.blob:
+	if e1.flags <> e2.flags:
+		fail += "f"
+	if hasattr(e1, 'data') and hasattr(e2, 'data') and isinstance(e1.data, dict) and isinstance(e2.data, dict) and (e1.data.get('text', -1) == e2.data.get('text', -2)):
+		# Some events may have changed from ASCII to Unicode, that's okay as long as text is the same
+		pass
+	elif e1.blob <> e2.blob:
 		fail += "b"
 	return fail
-
-
-def contact_by_id(contacts, id):
-	for contact in contacts:
-		if contact.contactID == id:
-			return contact
-	return None
-
-# Returns a dict with matched, missing and new contacts
-def compare_contact_lists(contacts1 = None, contacts2 = None):
-	ret = {}
-	ret['match'] = []					# A list of (contact1, contact2) pairs
-	ret['missing1'] = contacts1[:]		# Missing from contacts1
-	ret['missing2'] = contacts2[:]		# Missing from contacts2
-	missing_contact1 = []
-	for contact1 in contacts1:
-		contact2 = contact_by_id(contacts2, contact1.contactID)
-		if contact2 <> None:
-			ret['match'].append((contact1, contact2))
-			ret['missing1'].remove(contact1)
-			ret['missing2'].remove(contact2)
-	return ret
 
 
 def main():
@@ -142,17 +150,17 @@ def main():
 		contacts1 = db1.contacts()
 		contacts2 = db2.contacts()
 
-	cmp = compare_contact_lists(contacts1, contacts2)
+	ret = compare_contact_lists(contacts1, contacts2)
 	print "The following contacts from DB1 are missing:"
-	for contact1 in cmp['missing1']:
+	for contact1 in ret['missing1']:
 		print contact1.display_name
 	print "The following contacts in DB2 are new:"
-	for contact2 in cmp['missing2']:
+	for contact2 in ret['missing2']:
 		print contact2.display_name
 
 	if not args.contact: # explicitly compare one db.user against another
 		compare_contacts(db1, db2, db1.user, db2.user)
-	for (contact1, contact2) in cmp['match']:
+	for (contact1, contact2) in ret['match']:
 		compare_contacts(db1, db2, contact1, contact2)
 
 if __name__ == "__main__":

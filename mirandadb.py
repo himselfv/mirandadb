@@ -609,13 +609,26 @@ class MirandaDbxMmap(object):
 		cl.read(self.file)
 		log.debug(vars(cl))
 		return cl
-	
+
+	#
+	# Modules and protocols
+	#
 	_moduleNames = {}
 	def get_module_name(self, ofsModule):
 		if not ofsModule in self._moduleNames:
 			module = self.read(DBModuleName(), ofsModule)
 			self._moduleNames[ofsModule] = module.name
 		return self._moduleNames[ofsModule]
+
+	# For modules that are accounts, returns their base protocol (string)
+	_baseProtocols = {}
+	def get_base_proto(self, moduleName):
+		if isinstance(moduleName, int):	# this is offset
+			moduleName = self.get_module_name(moduleName)
+			if moduleName == None: return None
+		if not moduleName in self._baseProtocols:
+			self._baseProtocols[moduleName] = self.user.get_setting(moduleName, "AM_BaseProto")
+		return self._baseProtocols[moduleName]
 
 
 	#
@@ -769,12 +782,33 @@ class MirandaDbxMmap(object):
 	
 	# Decodes event data as simple string
 	def decode_event_data_string(self, event, _unicode):
-		# Simple events often have a terminating null in data
-		blob = utfutils.removeterm0(event.blob)
+		# Both ASCII and UTF-8 events may have terminating null which we should remove,
+		# or it'll be decoded into text
 		if _unicode:
+			# UTF-8 has internal nulls so we can only trim the final one easily
+			blob = utfutils.removeterm0(event.blob)
 			ret = self.utf8trydecode(blob)
 		else:
-			ret = self.mbcstrydecode(blob)
+			# ASCII may not have internal nulls at all, but event blobs may contain reserved space
+			# or even non-standard additional data
+			parts = event.blob.split('\0', 1)
+			blob = parts.pop(0)
+			ret = None
+			# ICQ protocol is known to had been attaching UTF-16 to non-unicode events
+			if self.get_base_proto(event.ofsModuleName) == "ICQ":
+				if len(parts) > 0:
+					print len(blob)
+					print len(parts[0])
+					# some safety against accidental mismatches
+					# first part is ascii/local (1 byte chars), second part is UTF-16 (2 byte chars almost always),
+					# so should be precisely twice the size (+ 2b term null in second case)
+			 		if (len(parts[0]) == 2*len(blob)+2):
+			 			ret = self.utf16trydecode(parts[0])
+			 			parts.pop(0)
+			if ret == None:
+				ret = self.mbcstrydecode(blob)
+				if (len(parts) > 0) and (len(parts[0]) > 0):
+					ret['problem'] = "Remainder data in event"
 		ret['unicode'] = _unicode
 		if 'problem' in ret:
 			log.warning('Event@'+str(event.offset)+': '+ret['problem'])
@@ -784,7 +818,13 @@ class MirandaDbxMmap(object):
 	def mbcstrydecode(self, data):
 		ret = {}
 		try:
-			ret['text'] = data.decode('mbcs')
+			# event blobs may contain empty space or more non-standard data,
+			# and decode('mbcs') won't stop at null, so do it manually
+			parts = data.split('\0', 1)
+			ret['text'] = parts[0].decode('mbcs')
+			ret['mbcs'] = data.encode('hex')
+			if (len(parts) > 1) and (len(parts[1]) > 0):
+				ret['problem'] = "Remainder data in event"
 		except DecodeError:
 			ret['problem'] = "Cannot decode as mbcs"
 			ret['mbcs'] = data.encode('hex')
@@ -801,6 +841,16 @@ class MirandaDbxMmap(object):
 		except UnicodeDecodeError:
 			ret['problem'] = "Cannot decode as utf-8"
 			ret['utf8'] = data.encode('hex')
+		return ret
+	
+	def utf16trydecode(self, data):
+		ret = {}
+		try:
+			text = data.decode('utf-16')
+			ret['text'] = text
+		except UnicodeDecodeError:
+			ret['problem'] = "Cannot decode as utf-16"
+			ret['utf16'] = data.encode('hex')
 		return ret
 
 
