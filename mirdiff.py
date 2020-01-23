@@ -104,10 +104,10 @@ def compare_event_lists(db1, db2, el1, el2):
 		if e2 == None:
 			el1_missing.append(e1)
 	for e1 in el1_missing:
-		e1.data['size'] = e1.cbBlob
+		e1.data.size = e1.cbBlob
 		print "!-DB2: "+mirandadb.format_event(db1, e1, e1.data)
 	for e2 in el2:
-		e2.data['size'] = e2.cbBlob
+		e2.data.size = e2.cbBlob
 		print "!-DB1: "+mirandadb.format_event(db2, e2, e2.data)
 
 # Compares two events, returns their difference mask
@@ -121,7 +121,7 @@ def compare_events(db1, db2, e1, e2):
 		fail += "t"
 	if e1.flags <> e2.flags:
 		fail += "f"
-	if hasattr(e1, 'data') and hasattr(e2, 'data') and isinstance(e1.data, dict) and isinstance(e2.data, dict) and (e1.data.get('text', -1) == e2.data.get('text', -2)):
+	if hasattr(e1, 'data') and hasattr(e2, 'data') and (getattr(e1.data, 'text', -1) == getattr(e2.data, 'text', -2)):
 		# Some events may have changed from ASCII to Unicode, that's okay as long as text is the same
 		pass
 	elif e1.blob <> e2.blob:

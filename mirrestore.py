@@ -13,18 +13,18 @@ log = logging.getLogger('mirrestore')
 class MirandaDbxMmapChk(mirandadb.MirandaDbxMmap):
 	def utf8trydecode(self, data):
 		ret = super(MirandaDbxMmapChk, self).utf8trydecode(data)
-		if 'problem' in ret:
+		if hasattr(ret, 'problem'):
 			return ret
 		
 		# Verify that the text looks like valid UTF16 after decoding
-		test = utfutils.utf16test(ret['text'])
+		test = utfutils.utf16test(ret.text)
 		if test == True:
 			return ret
-		ret['problem'] = test
-		ret['utf8'] = data.encode('hex')
-		text_bytes = utfutils.utf16bytes(ret['text'])
-		ret['utf16'] = text_bytes.encode('hex')
-		ret['text'] = None # remove text to indicate problems
+		ret.problem = test
+		ret.utf8 = data.encode('hex')
+		text_bytes = utfutils.utf16bytes(ret.text)
+		ret.utf16 = text_bytes.encode('hex')
+		ret.text = None # remove text to indicate problems
 		
 		"""
 		# There are some cases where DECODED utf16 contains utf8!
@@ -61,7 +61,7 @@ def dump_events(db, contact):
 			if not ('problem' in data):
 				continue
 		if args.bad_offsets:
-			data['offset'] = event.offset
+			data.offset = event.offset
 			bad_offset = event.offset // 0x10000
 			if bad_offset in bad_offsets:
 				bad_offsets[bad_offset] += 1

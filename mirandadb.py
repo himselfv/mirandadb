@@ -562,8 +562,7 @@ class DBEventBlob(DBStruct):
 		while True:
 			c = file.read(1)
 			if len(c) == 0:
-				log.warning('No more bytes where string is expected in event data (read:'+s.encode('hex')+')')
-				self.has_problems = True
+				self.problem = 'No more bytes where string is expected in event data (read:'+s.encode('hex')+')'
 				break
 			if c == chr(0):
 				break
@@ -572,6 +571,14 @@ class DBEventBlob(DBStruct):
 			return s.decode('utf-8')
 		else:
 			return unicode(s.decode('mbcs'))
+
+
+#
+# Simple message. May contain arbitrary additional fields
+#
+class MessageBlob:
+	def __init__(self, **kwargs):
+		self.__dict__.update(kwargs)
 
 class DBAuthBlob(DBEventBlob):
 	#[uin:DWORD, hContact:DWORD, nick, firstName, lastName, email, reason]
@@ -752,33 +759,31 @@ class MirandaDbxMmap(object):
 			event.data = self.db.decode_event_data(event)
 			return event
 	
-	# Returns either a string or something that can be vars()ed
+	# Returns a class that can be vars()ed
 	def decode_event_data(self, event):
 		_unicode = (event.DBEF_UTF & event.flags) <> 0
 		if event.flags & event.DBEF_ENCRYPTED: # Can't decrypt, return hex
-			return {
-				'type' : 'encrypted',
-				'hex' : event.blob.encode('hex'),
-				'unicode' : _unicode
-				}
+			ret = MessageBlob(
+				type = 'encrypted',
+				hex = event.blob.encode('hex'),
+				unicode = _unicode
+			)
 		elif event.eventType==event.EVENTTYPE_ADDED:
-			blob = DBAuthBlob(_unicode, event.blob)
-			if hasattr(blob, 'has_problems'):
-				log.warning('Event@'+str(event.offset)+': DBAuthBlob has problems')
-			return blob
+			ret = DBAuthBlob(_unicode, event.blob)
 		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
-			blob = DBAuthBlob(_unicode, event.blob)
-			if hasattr(blob, 'has_problems'):
-				log.warning('Event@'+str(event.offset)+': DBAuthBlob has problems')
-			return blob
+			ret = DBAuthBlob(_unicode, event.blob)
 		elif event.eventType==event.EVENTTYPE_MESSAGE:
-			return self.decode_event_data_string(event, _unicode)
+			ret = self.decode_event_data_string(event, _unicode)
 		else:
-			return {
-				'type' : 'unsupported',
-				'hex' : event.blob.encode('hex'),
-				'unicode' : _unicode
-				}
+			ret = MessageBlob(
+				type = 'unsupported',
+				hex = event.blob.encode('hex'),
+				unicode = _unicode
+			)
+		if hasattr(ret, 'problem'):
+			log.warning('Event@'+str(event.offset)+': '+ret.problem)
+			ret.hex = event.blob.encode('hex')	# Full message hex for debugging
+		return ret
 	
 	# Decodes event data as simple string
 	def decode_event_data_string(self, event, _unicode):
@@ -809,70 +814,66 @@ class MirandaDbxMmap(object):
 	 			(utf16blob, tail) = utfutils.eatutf16(tail)
 	 			utf16text = self.utf16trydecode(utf16blob)
 	 			
-	 			if 'problem' in utf16text:
-	 				ret['utf16_problem'] = utf16text['problem']
-	 				if not ('problem' in ret):
-	 					ret['problem'] = 'Problem with UTF16 text'
-	 				ret['utf16'] = utf16blob.encode('hex')
+	 			if hasattr(utf16text, 'problem'):
+	 				ret.utf16_problem = utf16text.problem
+	 				if not hasattr(ret, 'problem'):
+	 					ret.problem = 'Problem with UTF16 text'
+	 				ret.utf16 = utf16blob.encode('hex')
 	 			# We can't verify UTF16==ANSI because:
 	 			#  * ANSI may not be in our current locale
 	 			#  * ANSI can't encode everything Unicode can
 	 			# But we can check that at least it's not an obvious failure
-	 			elif (len(utf16text['text']) < len(ret['text']) / 2):
-	 				ret['problem'] = 'UTF16 tail doesn''t match at all'
-	 				ret['utf16'] = utf16text['text']
+	 			elif (len(utf16text.text) < len(ret.text) / 2):
+	 				ret.problem = 'UTF16 tail doesn''t match at all'
+	 				ret.utf16 = utf16text.text
 	 			else:
 	 				# Otherwise replace
-	 				utf16text['ansi'] = ret['text']
+	 				utf16text.ansi = ret.text
 	 				ret = utf16text
 	 	proto = self.get_base_proto(event.ofsModuleName)
 	 	if (len(tail) > 0) and (proto=="VKontakte"):
 	 		# Modern versions of VKontakte store message IDs as ASCII text
 	 		if len(tail) < 10:	# weed out obvious fails
-	 			ret['vk-mid'] = tail
+	 			ret.vk_mid = tail
 	 			tail = ''
 		if len(tail) > 0:
-			ret['remainder'] = tail.encode('hex')
-			if not ('problem' in ret):
-				ret['problem'] = "Remainder data in event"
-		ret['unicode'] = _unicode
-		if 'problem' in ret:
-			log.warning('Event@'+str(event.offset)+': '+ret['problem'])
+			ret.remainder = tail.encode('hex')
+			if not hasattr(ret, 'problem'):
+				ret.problem = "Remainder data in event"
+		ret.unicode = _unicode
 		return ret
 
 	# Decodes MBCS text and verifies that it's not junk
 	def mbcstrydecode(self, data):
-		ret = {}
+		ret = MessageBlob()
 		try:
-			ret['text'] = data.decode('mbcs')
-			ret['mbcs'] = data.encode('hex') # TODO: remove
+			ret.text = data.decode('mbcs')
+			ret.mbcs = data.encode('hex') # TODO: remove
 		except DecodeError:
-			ret['problem'] = "Cannot decode as mbcs"
-			ret['mbcs'] = data.encode('hex')
+			ret.problem = "Cannot decode as mbcs"
+			ret.mbcs = data.encode('hex')
 			return ret
 		return ret
 
 	# Decodes UTF8 text and verifies that it's not junk
 	# Returns (True, the decoded text) or (False, hex text, problem description)
 	def utf8trydecode(self, data):
-		ret = {}
+		ret = MessageBlob()
 		try:
-			text = data.decode('utf-8')
-			ret['text'] = text
+			ret.text = data.decode('utf-8')
 		except UnicodeDecodeError:
-			ret['problem'] = "Cannot decode as utf-8"
-			ret['utf8'] = data.encode('hex')
+			ret.problem = "Cannot decode as utf-8"
+			ret.utf8 = data.encode('hex')
 		return ret
 	
 	def utf16trydecode(self, data):
-		ret = {}
+		ret = MessageBlob()
 		try:
-			text = data.decode('UTF-16LE')	# LE, so that it doesn't eat bom, if it's present
-			ret['text'] = text
-			ret['utf16'] = data.encode('hex') # TODO: remove
+			ret.text = data.decode('UTF-16LE')	# LE, so that it doesn't eat bom, if it's present
+			ret.utf16 = data.encode('hex') # TODO: remove
 		except UnicodeDecodeError as e:
-			ret['problem'] = "Cannot decode as utf-16: "+str(e)
-			ret['utf16'] = data.encode('hex')
+			ret.problem = "Cannot decode as utf-16: "+str(e)
+			ret.utf16 = data.encode('hex')
 		return ret
 
 
@@ -1024,16 +1025,16 @@ def format_event(db, event, data = None):
 
 def dump_events(db, contact, params):
 	def should_print_event(event):
-		if params['bad_only'] and isinstance(data, dict) and ('problem' in data):
+		if params['bad_only'] and hasattr(data, 'problem'):
 			return True
-		if params['unsupported_only'] and isinstance(data, dict) and (data.get('type', None) in ['unsupported', 'encrypted']):
+		if params['unsupported_only'] and (getattr(data, 'type', None) in ['unsupported', 'encrypted']):
 			return True
 		return not (params['bad_only'] or params['unsupported_only'])
 	print "Events for "+contact.display_name+": "
 	for event in db.get_events(contact):
 		data = event.data
-		if isinstance(data, dict) and ('problem' in data):
-			data['offset'] = event.offset
+		if hasattr(data, 'problem'):
+			data.offset = event.offset
 		if not should_print_event(event):
 			continue
 		print format_event(db, event, data)
