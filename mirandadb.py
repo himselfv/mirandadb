@@ -548,7 +548,8 @@ class DBEvent(DBStruct):
 # Event content types
 #
 class DBEventBlob(DBStruct):
-	def __init__(self, unicode, file = None):
+	# Omit Unicode if your event type does not care
+	def __init__(self, file = None, unicode = None):
 		self.unicode = unicode
 		# "file" may be a Bytes() instead
 		if file <> None:
@@ -557,21 +558,29 @@ class DBEventBlob(DBStruct):
 				file = io.BytesIO(file)
 			self.read(file)
 	
-	def read_str(self, file):
+	def try_read_str(self, file, default = None):
 		s = ""
+		c = file.read(1)
+		if len(c) == 0:
+			return default
 		while True:
+			if c == chr(0):
+				break
+			s = s + c
 			c = file.read(1)
 			if len(c) == 0:
 				self.problem = 'No more bytes where string is expected in event data (read:'+s.encode('hex')+')'
 				break
-			if c == chr(0):
-				break
-			s = s + c
 		if self.unicode:
 			return s.decode('utf-8')
 		else:
 			return unicode(s.decode('mbcs'))
-
+	
+	def read_str(self, file):
+		ret = self.try_read_str(file)
+		if ret == None:
+			self.problem = 'String expected but not found in event data'
+		return ret
 
 #
 # Simple message. May contain arbitrary additional fields
@@ -600,6 +609,52 @@ class DBAuthRequestBlob(DBAuthBlob):
 	def read(self, file):
 		super(DBAuthRequestBlob, self).read(file)
 		self.reason = self.read_str(file)
+
+class DBFileBlob(DBEventBlob):
+	# DWORD, szFilename\0, [szFilename\0...], szDescription\0
+	FORMAT = "=I"
+	def unpack(self, tuple):
+		(self.header,
+		) = tuple
+		DWORD	== 0
+	def read(self, file):
+		super(DBFileBlob, self).read(file)
+		self.filenames = []
+		while True:
+			filename = self.try_read_str(file)
+			if filename <> None:
+				self.filenames.append(part)
+		if len(filenames) <= 2:	# There must be at least one of each
+			self.problem = 'No filename or no description in EVENTTYPE_FILE'
+		if len(filenames) > 0:
+			self.description = self.filenames.pop()
+
+
+class DBJabberPresenceBlob(DBEventBlob):
+	JABBER_DB_EVENT_PRESENCE_SUBSCRIBE		= 1
+	JABBER_DB_EVENT_PRESENCE_SUBSCRIBED		= 2
+	JABBER_DB_EVENT_PRESENCE_UNSUBSCRIBE	= 3
+	JABBER_DB_EVENT_PRESENCE_UNSUBSCRIBED	= 4
+	JABBER_DB_EVENT_PRESENCE_ERROR			= 5
+	FORMAT = "=B"
+	def unpack(self, tuple):
+		(self.presence,
+		) = tuple
+
+class DBJabberChatStatesBlob(DBEventBlob):
+	JABBER_DB_EVENT_CHATSTATES_GONE			= 1
+	FORMAT = "=B"
+	def unpack(self, tuple):
+		(self.state,
+		) = tuple
+
+class DBVKontakteUserDeactivateActionBlob:
+	# Contains a single localized UTF8 string with a description of one of three events:
+	#  1. Restored control of their page, 2. Deactivated (deleted), 3. Deactivated (banned)
+	# vkontakte\src\misc.cpp
+	def read(self, file):
+		super(DBVKontakteUserDeactivateActionBlob, self).read(file)
+		self.description = self.read_str(file)
 
 
 class MirandaDbxMmap(object):
@@ -766,18 +821,31 @@ class MirandaDbxMmap(object):
 	# Returns a class that can be vars()ed
 	def decode_event_data(self, event):
 		_unicode = (event.DBEF_UTF & event.flags) <> 0
+		proto = self.get_base_proto(event.ofsModuleName)
 		if event.flags & event.DBEF_ENCRYPTED: # Can't decrypt, return hex
 			ret = MessageBlob(
 				type = 'encrypted',
 				hex = event.blob.encode('hex'),
 				unicode = _unicode
 			)
-		elif event.eventType==event.EVENTTYPE_ADDED:
-			ret = DBAuthBlob(_unicode, event.blob)
-		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
-			ret = DBAuthRequestBlob(_unicode, event.blob)
 		elif event.eventType==event.EVENTTYPE_MESSAGE:
 			ret = self.decode_event_data_string(event, _unicode)
+		elif event.eventType==event.EVENTTYPE_ADDED:
+			ret = DBAuthBlob(event.blob, _unicode)
+		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
+			ret = DBAuthRequestBlob(event.blob, _unicode)
+		elif event.eventType==event.EVENTTYPE_FILE:
+			ret = DBFileBlob(event.blob, _unicode)
+		elif event.eventType==event.EVENTTYPE_STATUSCHANGE:
+			# Both NewXStatusNotify and TabSRMM produce this as UTF8 DBEF_UTF
+			# The text is freeform and expects adding nickname at the beginning.
+			ret = self.decode_event_data_string(event, _unicode)
+		elif (proto=='JABBER') and (event.eventType==event.EVENTTYPE_JABBER_PRESENCE):
+			ret = DBJabberPresenceBlob(event.blob)
+		elif (proto=='JABBER') and (event.eventType==event.EVENTTYPE_JABBER_CHATSTATES):
+			ret = DBJabberChatStatesBlob(event.blob)
+		elif (proto=='VKontakte') and (event.eventType==event.VK_USER_DEACTIVATE_ACTION):
+			ret = DBVKontakteUserDeactivateActionBlob
 		else:
 			ret = MessageBlob(
 				type = 'unsupported',
@@ -986,6 +1054,9 @@ def event_stats_contact(db, contact, stats):
 		stats['count'] += 1
 		
 		moduleName = db.get_module_name(event.ofsModuleName)
+		moduleProto = db.get_base_proto(moduleName)
+		if moduleProto <> None:
+			moduleName = moduleProto
 		s_modules = stats['modules']
 		s_modules[moduleName] = s_modules.get(moduleName, 0) + 1
 		
