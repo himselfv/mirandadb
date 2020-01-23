@@ -805,15 +805,14 @@ class MirandaDbxMmap(object):
 			(blob, tail) = utfutils.eatansi(event.blob)
 			ret = self.mbcstrydecode(blob)		# The ANSI version
 			# The tail may contain "UTF-16 version", "additional data" and "junk" and there's no flag to tell which is which
-			# But the common code that added UTF-16 always added EXACTLY twice the ANSI bytes (even if multibyte ANSI required less),
-			# so that's a pretty good indicator
+			# But the common code that added UTF-16 always added EXACTLY twice the ANSI bytes, so that's a pretty good indicator
 			# We may also have MORE than that, and we may have accidental exact match for short messages,
 			# but we'll ignore both possibilities for now (too rare in practice to study them)
 			if (len(tail) > 0) and (len(tail) == 2*len(blob)+2): # +2b non-removed null
-	 			# Actual UTF16 string may be shorter due to UTF-16 over-allocation (if ANSI had been MBCS and required less than twice the size)
+	 			# Actual UTF16 string may be shorter due to UTF-16 over-allocation --
+	 			# if ANSI had been MBCS and required less than twice the size
 	 			(utf16blob, tail) = utfutils.eatutf16(tail)
 	 			utf16text = self.utf16trydecode(utf16blob)
-	 			
 	 			if hasattr(utf16text, 'problem'):
 	 				ret.utf16_problem = utf16text.problem
 	 				if not hasattr(ret, 'problem'):
@@ -830,6 +829,8 @@ class MirandaDbxMmap(object):
 	 				# Otherwise replace
 	 				utf16text.ansi = ret.text
 	 				ret = utf16text
+	 				# Since the length had been EXACTLY twice the size, on success throw out the tail (see above)
+	 				tail = ''
 	 	proto = self.get_base_proto(event.ofsModuleName)
 	 	if (len(tail) > 0) and (proto=="VKontakte"):
 	 		# Modern versions of VKontakte store message IDs as ASCII text
