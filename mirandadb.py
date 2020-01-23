@@ -621,11 +621,12 @@ class DBFileBlob(DBEventBlob):
 		self.filenames = []
 		while True:
 			filename = self.try_read_str(file)
-			if filename <> None:
-				self.filenames.append(filename)
-		if len(filenames) <= 2:	# There must be at least one of each
+			if filename == None:
+				break
+			self.filenames.append(filename)
+		if len(self.filenames) < 2:	# There must be at least one of each
 			self.problem = 'No filename or no description in EVENTTYPE_FILE'
-		if len(filenames) > 0:
+		if len(self.filenames) > 0:
 			self.description = self.filenames.pop()
 
 
