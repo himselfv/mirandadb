@@ -94,6 +94,7 @@ def compare_find_event(db1, db2, e1, el2):
 def compare_event_lists(db1, db2, el1, el2):
 	el1_missing = []
 	el2_all = el2[:]
+	el2_match = []
 	for e1 in el1:
 		e2 = compare_find_event(db1, db2, e1, el2)
 		if e2 <> None:
@@ -103,6 +104,18 @@ def compare_event_lists(db1, db2, el1, el2):
 			e2 = compare_find_event(db1, db2, e1, el2_all)
 		if e2 == None:
 			el1_missing.append(e1)
+		else:
+			el2_match.append(e2)
+	# Scan e2 remainder for exact duplicates on e1
+	for e2 in el2[:]:
+		e1 = compare_find_event(db2, db1, e2, el1)
+		if e1 <> None:
+			el2.remove(e2)
+			el2_match.append(e2)
+	if (len(el1_missing)>0) or (len(el2)>0):
+		# Print out ALL events for this timestamp to simplify figuring out the problem
+		for e2 in el2_match:
+			print "==DB: "+mirandadb.format_event(db2, e2, e2.data)
 	for e1 in el1_missing:
 		e1.data.size = e1.cbBlob
 		print "!-DB2: "+mirandadb.format_event(db1, e1, e1.data)

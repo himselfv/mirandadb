@@ -53,13 +53,10 @@ def dump_events(db, contact):
 	global bad_offsets
 	for event in db.get_events(contact):
 		data = event.data
-		if isinstance(data, dict) and ('problem' in data):
+		if hasattr(data, 'problem'):
 			bad_event_count += 1
-		if args.bad_events:
-			if not isinstance(data, dict):
-				continue
-			if not ('problem' in data):
-				continue
+		if args.bad_events and not hasattr(data, 'problem'):
+			continue
 		if args.bad_offsets:
 			data.offset = event.offset
 			bad_offset = event.offset // 0x10000
