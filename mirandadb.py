@@ -825,6 +825,12 @@ class MirandaDbxMmap(object):
 	 				# Otherwise replace
 	 				utf16text['ansi'] = ret['text']
 	 				ret = utf16text
+	 	proto = self.get_base_proto(event.ofsModuleName)
+	 	if (len(tail) > 0) and (proto=="VKontakte"):
+	 		# Modern versions of VKontakte store message IDs as ASCII text
+	 		if len(tail) < 10:	# weed out obvious fails
+	 			ret['vk-mid'] = tail
+	 			tail = ''
 		if len(tail) > 0:
 			ret['remainder'] = tail.encode('hex')
 			if not ('problem' in ret):
