@@ -581,7 +581,8 @@ class MessageBlob:
 		self.__dict__.update(kwargs)
 
 class DBAuthBlob(DBEventBlob):
-	#[uin:DWORD, hContact:DWORD, nick, firstName, lastName, email, reason]
+	#"Contact added"
+	#[uin:DWORD; hContact:DWORD; nick, firstName, lastName, email: str]
 	FORMAT = "=II"
 	def unpack(self, tuple):
 		(self.uin,
@@ -594,8 +595,11 @@ class DBAuthBlob(DBEventBlob):
 		self.firstName = self.read_str(file)
 		self.lastName = self.read_str(file)
 		self.email = self.read_str(file)
+class DBAuthRequestBlob(DBAuthBlob):
+	# AuthRequest adds [reason:str]
+	def read(self, file):
+		super(DBAuthRequestBlob, self).read(file)
 		self.reason = self.read_str(file)
-
 
 
 class MirandaDbxMmap(object):
@@ -771,7 +775,7 @@ class MirandaDbxMmap(object):
 		elif event.eventType==event.EVENTTYPE_ADDED:
 			ret = DBAuthBlob(_unicode, event.blob)
 		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
-			ret = DBAuthBlob(_unicode, event.blob)
+			ret = DBAuthRequestBlob(_unicode, event.blob)
 		elif event.eventType==event.EVENTTYPE_MESSAGE:
 			ret = self.decode_event_data_string(event, _unicode)
 		else:
