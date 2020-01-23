@@ -614,16 +614,15 @@ class DBFileBlob(DBEventBlob):
 	# DWORD, szFilename\0, [szFilename\0...], szDescription\0
 	FORMAT = "=I"
 	def unpack(self, tuple):
-		(self.header,
+		(self.header,			# Purpose unknown, typically == 0
 		) = tuple
-		DWORD	== 0
 	def read(self, file):
 		super(DBFileBlob, self).read(file)
 		self.filenames = []
 		while True:
 			filename = self.try_read_str(file)
 			if filename <> None:
-				self.filenames.append(part)
+				self.filenames.append(filename)
 		if len(filenames) <= 2:	# There must be at least one of each
 			self.problem = 'No filename or no description in EVENTTYPE_FILE'
 		if len(filenames) > 0:
