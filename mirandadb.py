@@ -589,6 +589,17 @@ class MessageBlob:
 	def __init__(self, **kwargs):
 		self.__dict__.update(kwargs)
 
+class DBURLBlob(DBEventBlob):
+	# include/m_protosvc.h says:
+	#   blob contains szMessage without 0 terminator
+	# EmLanProto/src/mlan.cpp: UTF message WITH \0
+	# FacebookRM/src/process.cpp: UTF message WITH \0
+	# ICQCorp/src/services.cpp: TWO ANSI/UTF messages WITH \0 each (message + description)
+	def read(self, file):
+		super(DBURLBlob, self).read(file)
+		self.url = self.read_str(file)
+		self.desc = self.try_read_str(file)
+
 class DBAuthBlob(DBEventBlob):
 	#"Contact added"
 	#[uin:DWORD; hContact:DWORD; nick, firstName, lastName, email: str]
@@ -597,9 +608,8 @@ class DBAuthBlob(DBEventBlob):
 		(self.uin,
 		self.hContact
 		) = tuple
-	
 	def read(self, file):
-		super(DBEventBlob, self).read(file)
+		super(DBAuthBlob, self).read(file)
 		self.nick = self.read_str(file)
 		self.firstName = self.read_str(file)
 		self.lastName = self.read_str(file)
@@ -629,6 +639,20 @@ class DBFileBlob(DBEventBlob):
 		if len(self.filenames) > 0:
 			self.description = self.filenames.pop()
 
+
+class DBICQMissedMessageBlob(DBEventBlob):
+	# "This message was blocked by the ICQ server"
+	#   IcqOscarJ\src\icqosc_svcs.cpp\icq_getEventTextMissedMessage
+	#   IcqOscarJ\src\fam_04message.cpp\handleMissedMsg
+	ICQ_REJECTED_BLOCKED		= 0	# The message was invalid.
+	ICQ_REJECTED_TOO_LONG		= 1	# The message was too long.
+	ICQ_REJECTED_FLOOD			= 2	# The sender has flooded the server.
+	ICQ_REJECTED_TOO_EVIL		= 4	# You are too evil.
+	# Other codes are not entirely impossible
+	FORMAT = "=H"
+	def unpack(self, tuple):
+		(self.reason,			# Purpose unknown, typically == 0
+		) = tuple
 
 class DBJabberPresenceBlob(DBEventBlob):
 	JABBER_DB_EVENT_PRESENCE_SUBSCRIBE		= 1
@@ -830,6 +854,8 @@ class MirandaDbxMmap(object):
 			)
 		elif event.eventType==event.EVENTTYPE_MESSAGE:
 			ret = self.decode_event_data_string(event, _unicode)
+		elif event.eventType==event.EVENTTYPE_URL:
+			ret = DBURLBlob(event.blob, _unicode)
 		elif event.eventType==event.EVENTTYPE_ADDED:
 			ret = DBAuthBlob(event.blob, _unicode)
 		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
@@ -840,6 +866,8 @@ class MirandaDbxMmap(object):
 			# Both NewXStatusNotify and TabSRMM produce this as UTF8 DBEF_UTF
 			# The text is freeform and expects adding nickname at the beginning.
 			ret = self.decode_event_data_string(event, _unicode)
+		elif (proto=='ICQ') and (event.eventType==event.ICQEVENTTYPE_MISSEDMESSAGE):
+			ret = DBICQMissedMessageBlob(event.blob)
 		elif (proto=='JABBER') and (event.eventType==event.EVENTTYPE_JABBER_PRESENCE):
 			ret = DBJabberPresenceBlob(event.blob)
 		elif (proto=='JABBER') and (event.eventType==event.EVENTTYPE_JABBER_CHATSTATES):
