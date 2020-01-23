@@ -804,15 +804,16 @@ class MirandaDbxMmap(object):
 			# so that's a pretty good indicator
 			# We may also have MORE than that, and we may have accidental exact match for short messages,
 			# but we'll ignore both possibilities for now (too rare in practice to study them)
-			if (len(tail) > 0) and (len(parts[0]) == 2*len(blob)+2): # +2b non-removed null
+			if (len(tail) > 0) and (len(tail) == 2*len(blob)+2): # +2b non-removed null
 	 			# Actual UTF16 string may be shorter due to UTF-16 over-allocation (if ANSI had been MBCS and required less than twice the size)
-	 			(utf16text, tail) = utfutils.eatutf16(tail)
-	 			utf16text = self.utf16trydecode(utf16text)
+	 			(utf16blob, tail) = utfutils.eatutf16(tail)
+	 			utf16text = self.utf16trydecode(utf16blob)
 	 			
 	 			if 'problem' in utf16text:
 	 				ret['utf16_problem'] = utf16text['problem']
 	 				if not ('problem' in ret):
 	 					ret['problem'] = 'Problem with UTF16 text'
+	 				ret['utf16'] = utf16blob.encode('hex')
 	 			# We can't verify UTF16==ANSI because:
 	 			#  * ANSI may not be in our current locale
 	 			#  * ANSI can't encode everything Unicode can
@@ -860,11 +861,11 @@ class MirandaDbxMmap(object):
 	def utf16trydecode(self, data):
 		ret = {}
 		try:
-			text = data.decode('utf-16le')	# LE, so that it doesn't eat bom, if it's present
+			text = data.decode('UTF-16LE')	# LE, so that it doesn't eat bom, if it's present
 			ret['text'] = text
 			ret['utf16'] = data.encode('hex') # TODO: remove
-		except UnicodeDecodeError:
-			ret['problem'] = "Cannot decode as utf-16"
+		except UnicodeDecodeError as e:
+			ret['problem'] = "Cannot decode as utf-16: "+str(e)
 			ret['utf16'] = data.encode('hex')
 		return ret
 
@@ -1025,7 +1026,7 @@ def dump_events(db, contact, params):
 	print "Events for "+contact.display_name+": "
 	for event in db.get_events(contact):
 		data = event.data
-		if 'problem' in data:
+		if isinstance(data, dict) and ('problem' in data):
 			data['offset'] = event.offset
 		if not should_print_event(event):
 			continue

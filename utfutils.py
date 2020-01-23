@@ -29,7 +29,7 @@ def eatutf16(buf):
 			if i <= 0:
 				return ('', buf[2:])
 			else:
-				return (buf[0:2*i-1], buf[2*i+2:])
+				return (buf[0:2*i], buf[2*i+2:])
 	return (buf, '')
 
 
