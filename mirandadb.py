@@ -46,6 +46,7 @@ DBHeader
 # Inherit and override unpack() or read()
 # If self.FORMAT is present, its going to be automatically read and passed to unpack().
 # If self.SIGNATURE is present, its going to be compared to self.signature.
+# If self.FIELDS is present, .pack()/.unpack() will be auto-generated
 #
 class DBStruct(object):
 	def read(self, file):
@@ -53,12 +54,28 @@ class DBStruct(object):
 		if hasattr(self, 'FORMAT'):
 			# struct.* only reads from buffer so need to read bytes
 			buffer = file.read(struct.calcsize(self.FORMAT))
-			tuple = struct.unpack(self.FORMAT, buffer)
-			self.unpack(tuple)
+			_tuple = struct.unpack(self.FORMAT, buffer)
+			if hasattr(self, 'FIELDS'):
+				assert(len(_tuple)==len(self.FIELDS))
+				for i in range(0, len(self.FIELDS)):
+					setattr(self, self.FIELDS[i], _tuple[i])
+			else:
+				self.unpack(_tuple)
 		if hasattr(self, 'SIGNATURE'):
 			if self.signature <> self.SIGNATURE:
 				raise Exception(type(self).__name__+': expected signature '+str(self.SIGNATURE)+', found '+str(self.signature))
-
+	def write(self, file, offset=None):
+		if offset <> None:
+			file.seek(offset, 0)
+		if hasattr(self, 'SIGNATURE'):
+			self.signature = self.SIGNATURE
+		if hasattr(self, 'FORMAT'):
+			if hasattr(self, 'FIELDS'):
+				_tuple = tuple(getattr(self, field) for field in self.FIELDS)
+			else:
+				_tuple = self.pack()
+			buffer = struct.pack(self.FORMAT, _tuple)
+			file.write(buffer)
 
 """
 BYTE signature[16];     // 'Miranda ICQ DB',0,26
@@ -76,16 +93,16 @@ DWORD ofsModuleNames;   // offset to first struct DBModuleName in the chain
 """
 class DBHeader(DBStruct):
 	FORMAT = '=16sIIIIIII'
-	def unpack(self, tuple):
-		(self.signature,
-		self.version,
-		self.ofsFileEnd,
-		self.slackSpace,
-		self.contactCount,
-		self.ofsFirstContact,
-		self.ofsUser,
-		self.ofsModuleNames
-		) = tuple
+	FIELDS = [
+		'signature',
+		'version',
+		'ofsFileEnd',
+		'slackSpace',
+		'contactCount',
+		'ofsFirstContact',
+		'ofsUser',
+		'ofsModuleNames'
+	]
 
 
 """
@@ -97,16 +114,16 @@ char name[1];           // name, no nul terminator
 class DBModuleName(DBStruct):
 	SIGNATURE = 0x4DDECADE
 	FORMAT = "=IIB"
+	FIELDS = [
+		'signature',
+		'ofsNext',
+		'cbName'
+	]
 	def read(self, file):
 		# read the static part
 		super(DBModuleName, self).read(file)
 		# read the dynamic part
 		self.name = unicode(file.read(self.cbName).decode('ascii'))
-	def unpack(self, tuple):
-		(self.signature,
-		self.ofsNext,
-		self.cbName
-		) = tuple
 
 
 """
@@ -124,18 +141,17 @@ DWORD dwContactID;
 class DBContact(DBStruct):
 	SIGNATURE = 0x43DECADE
 	FORMAT = "=IIIIIIIII"
-	def unpack(self, tuple):
-		(self.signature,
-		self.ofsNext,
-		self.ofsFirstSettings,
-		self.eventCount,
-		self.ofsFirstEvent,
-		self.ofsLastEvent,
-		self.ofsFirstUnread,
-		self.tsFirstUnread,
-		self.contactID
-		) = tuple
-
+	FIELDS = [
+		'signature',
+		'ofsNext',
+		'ofsFirstSettings',
+		'eventCount',
+		'ofsFirstEvent',
+		'ofsLastEvent',
+		'ofsFirstUnread',
+		'tsFirstUnread',
+		'contactID'
+	]
 	def __str__(self):
 		return unicode({
 			'signature': self.signature,
@@ -209,13 +225,12 @@ BYTE blob[1];           // the blob. a back-to-back sequence of DBSetting
 class DBContactSettings(DBStruct):
 	SIGNATURE = 0x53DECADE
 	FORMAT = "=IIII"
-	def unpack(self, tuple):
-		(self.signature,
-		self.ofsNext,
-		self.ofsModuleName,
-		self.cbBlob
-		) = tuple
-	
+	FIELDS = [
+		'signature',
+		'ofsNext',
+		'ofsModuleName',
+		'cbBlob'
+	]
 	def read(self, file):
 		# read the static part
 		super(DBContactSettings, self).read(file)
@@ -382,26 +397,16 @@ class DBSetting(DBStruct):
 			raise Exception('Invalid data type in setting entry'+self.type_to_str(self.type))
 
 	def type_to_str(self, type):
-		if self.type == self.DBVT_DELETED:
-			return "DBVT_DELETED"
-		elif self.type == self.DBVT_BYTE:
-			return "DBVT_BYTE"
-		elif self.type == self.DBVT_WORD:
-			return "DBVT_WORD"
-		elif self.type == self.DBVT_DWORD:
-			return "DBVT_DWORD"
-		elif self.type == self.DBVT_ASCIIZ:
-			return "DBVT_ASCIIZ"
-		elif self.type == self.DBVT_BLOB:
-			return "DBVT_BLOB"
-		elif self.type == self.DBVT_UTF8:
-			return "DBVT_UTF8"
-		elif self.type == self.DBVT_WCHAR:
-			return "DBVT_WCHAR"
-		elif self.type == self.DBVT_ENCRYPTED:
-			return "DBVT_ENCRYPTED"
-		elif self.type == self.DBVT_UNENCRYPTED:
-			return "DBVT_UNENCRYPTED"
+		if self.type == self.DBVT_DELETED:			return "DBVT_DELETED"
+		elif self.type == self.DBVT_BYTE:			return "DBVT_BYTE"
+		elif self.type == self.DBVT_WORD:			return "DBVT_WORD"
+		elif self.type == self.DBVT_DWORD:			return "DBVT_DWORD"
+		elif self.type == self.DBVT_ASCIIZ:			return "DBVT_ASCIIZ"
+		elif self.type == self.DBVT_BLOB:			return "DBVT_BLOB"
+		elif self.type == self.DBVT_UTF8:			return "DBVT_UTF8"
+		elif self.type == self.DBVT_WCHAR:			return "DBVT_WCHAR"
+		elif self.type == self.DBVT_ENCRYPTED:		return "DBVT_ENCRYPTED"
+		elif self.type == self.DBVT_UNENCRYPTED:	return "DBVT_UNENCRYPTED"
 		else:
 			return str(type) # whatever is in there
 
@@ -528,18 +533,17 @@ class DBEvent(DBStruct):
 
 	SIGNATURE = 0x45DECADE
 	FORMAT = "=IIIIIIIHI"
-	def unpack(self, tuple):
-		(self.signature,
-		self.contactID,
-		self.ofsPrev,
-		self.ofsNext,
-		self.ofsModuleName,
-		self.timestamp,
-		self.flags,
-		self.eventType,
-		self.cbBlob
-		) = tuple
-	
+	FIELDS = [
+		'signature',
+		'contactID',
+		'ofsPrev',
+		'ofsNext',
+		'ofsModuleName',
+		'timestamp',
+		'flags',
+		'eventType',
+		'cbBlob'
+	]
 	def read(self, file):
 		# read the static part
 		super(DBEvent, self).read(file)
@@ -709,7 +713,6 @@ class DBJabberPresenceBlob(DBEventBlob):
 	def unpack(self, tuple):
 		(self.presence,
 		) = tuple
-
 class DBJabberChatStatesBlob(DBEventBlob):
 	JABBER_DB_EVENT_CHATSTATES_GONE			= 1
 	FORMAT = "=B"
@@ -911,7 +914,7 @@ class MirandaDbxMmap(object):
 			# Both NewXStatusNotify and TabSRMM produce this as UTF8 DBEF_UTF
 			# The text is freeform and expects adding nickname at the beginning.
 			ret = self.decode_event_data_string(event, _unicode)
-		elif event.eventType==event.EVENTTYPE_AVATARCHANGE:
+		elif event.eventType==event.EVENTTYPE_AVATAR_CHANGE:
 			ret = DBAvatarChangeBlob(event.blob, _unicode)
 		elif (proto=='ICQ') and (event.eventType==event.ICQEVENTTYPE_MISSEDMESSAGE):
 			ret = DBICQMissedMessageBlob(event.blob)
