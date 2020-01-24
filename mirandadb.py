@@ -451,11 +451,14 @@ class DBEvent(DBStruct):
 	#   plugins\IEHistory\src\stdafx.h
 	EVENTTYPE_STATUSCHANGE	= 25368
 	
-	# Widely used. Defined in two different ways (AVATAR_CHANGE and AVATARCHANGE)
+	# Well known in two different ways (AVATAR_CHANGE and AVATARCHANGE).
+	# Written by AvatarHistory but under contact's proto:
 	#   ExternalAPI\m_avatarhistory.h
 	EVENTTYPE_AVATAR_CHANGE	= 9003
 	
-	# Origin unknown, usage unknown
+	# Produced by plugins\TabSRMM\src\sendqueue.cpp\logError()
+	# Very weird, tries to store its message in "module name" and (optionally) non-sent message in data,
+	# so can contain basically anything.
 	#   plugins\TabSRMM\src\msgs.h
 	EVENTTYPE_ERRMSG		= 25366
 	
@@ -639,6 +642,12 @@ class DBFileBlob(DBEventBlob):
 		if len(self.filenames) > 0:
 			self.description = self.filenames.pop()
 
+class DBAvatarChangeBlob(DBEventBlob):
+	# AvatarHistory/src/AvatarHistory.cpp/AvatarChanged
+	# Stores a single string, relative path to new avatar.
+	def read(self, file):
+		super(DBAvatarChangeBlob, self).read(file)
+		self.rel_path = self.read_str(file)
 
 class DBICQMissedMessageBlob(DBEventBlob):
 	# "This message was blocked by the ICQ server"
@@ -653,6 +662,42 @@ class DBICQMissedMessageBlob(DBEventBlob):
 	def unpack(self, tuple):
 		(self.reason,			# Purpose unknown, typically == 0
 		) = tuple
+class DBICQSMSBlob(DBEventBlob):
+	# Sent or received SMS
+	#   plugins\SMS\src\receive.cpp\handleAckSMS()
+	#     DBEF_UTF freeform text:
+	#     "SMS From: +%phone%\r\n%message%" + (DWORD == 0)
+	#   plugins\SMS\src\send.cpp\StartSmsSend()
+	#     DBEF_UTF, Freeform text:
+	#     "SMS To: +%phone%\r\n%message%" + (DWORD)
+	# Strings are not localized so the text is predictable.
+	def read(self, file):
+		super(DBICQSMSBlob, self).read(file)
+		self.text = self.read_str(file)
+		self.unk1 = struct.unpack("=I", file.read(4))[0]
+class DBICQSMSConfirmationBlob(DBEventBlob):
+	# SMS delivery receipt from server
+	#   plugins\SMS\src\receive.cpp\handleAckSMS()
+	#     "SMS Confirmation From: +%phone%\r\nSMS was sent succesfully", (DWORD == 0)
+	#     "SMS Confirmation From: +%phone%\r\nSMS was not sent succesfully: %error%", (DWORD ==0)
+	# Strings are not localized so the text is predictable.
+	def read(self, file):
+		super(DBICQSMSConfirmationBlob, self).read(file)
+		self.text = self.read_str(file)
+		self.unk1 = struct.unpack("=I", file.read(4))[0]
+class DBICQWebPagerBlob(DBEventBlob):
+	# IcqOscarJ\src\fam_04message.cpp\handleMessageTypes()
+	#   "blob is: body(ASCIIZ), name(ASCIIZ), email(ASCIIZ)"
+	#   The strings in fact follow the encoding of the Miranda build (even though they don't set DBEF_UTF8)
+	def read(self, file):
+		super(DBICQWebPagerBlob, self).read(file)
+		self.body = self.read_str(file)
+		self.name = self.read_str(file)
+		self.email = self.read_str(file)
+class DBICQEmailExpressBlob(DBEventBlob):
+	# IcqOscarJ\src\fam_04message.cpp\handleMessageTypes()
+	# Exactly matches ICQEVENTTYPE_WEBPAGER blob.
+	pass
 
 class DBJabberPresenceBlob(DBEventBlob):
 	JABBER_DB_EVENT_PRESENCE_SUBSCRIBE		= 1
@@ -866,8 +911,18 @@ class MirandaDbxMmap(object):
 			# Both NewXStatusNotify and TabSRMM produce this as UTF8 DBEF_UTF
 			# The text is freeform and expects adding nickname at the beginning.
 			ret = self.decode_event_data_string(event, _unicode)
+		elif event.eventType==event.EVENTTYPE_AVATARCHANGE:
+			ret = DBAvatarChangeBlob(event.blob, _unicode)
 		elif (proto=='ICQ') and (event.eventType==event.ICQEVENTTYPE_MISSEDMESSAGE):
 			ret = DBICQMissedMessageBlob(event.blob)
+		elif (proto=='ICQ') and (event.eventType==event.ICQEVENTTYPE_SMS):
+			ret = DBICQSMSBlob(event.blob)
+		elif (proto=='ICQ') and (event.eventType==event.ICQEVENTTYPE_SMSCONFIRMATION):
+			ret = DBICQSMSConfirmationBlob(event.blob)
+		elif (proto=='ICQ') and (event.eventType==event.ICQEVENTTYPE_WEBPAGER):
+			ret = DBICQWebPagerBlob(event.blob)
+		elif (proto=='ICQ') and (event.eventType==event.ICQEVENTTYPE_EMAILEXPRESS):
+			ret = DBICQEmailExpressBlob(event.blob)
 		elif (proto=='JABBER') and (event.eventType==event.EVENTTYPE_JABBER_PRESENCE):
 			ret = DBJabberPresenceBlob(event.blob)
 		elif (proto=='JABBER') and (event.eventType==event.EVENTTYPE_JABBER_CHATSTATES):
