@@ -562,6 +562,8 @@ class DBEvent(DBStruct):
 		self.cbBlob = len(self.blob)
 		super(DBEvent, self).write(file)
 		file.write(self.blob)
+	def size(self):
+		return super(DBEvent, self).size() + len(self.blob)
 
 
 #
@@ -764,6 +766,7 @@ class MirandaDbxMmap(object):
 	
 	# By default we write at the offset specified in the structure
 	def write(self, cl, offset):
+		log.debug('Writing at offset '+str(offset)+': '+str(vars(cl)))
 		self.file.seek(offset, 0)
 		cl.write(self.file)
 	
@@ -1383,8 +1386,6 @@ def add_event(db, args):
 	event.flags = event.DBEF_UTF
 	event.eventType = 0
 	event.blob = args.text.encode('utf-8')
-	print vars(contact)
-	print vars(event)
 	db.add_event(contact, event)
 
 def delete_event(db, args):
