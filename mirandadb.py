@@ -1008,12 +1008,14 @@ class MirandaDbxMmap(object):
 		def __iter__(self):
 			return self
 		def next(self):
+			event = None
 			while True and self.offset <> 0:
 				event = self.db.read_event(self.offset)
 				self.offset = event.ofsNext if event <> None else 0
 				if (event == None) or (self.contactId == None) or (event.contactID == self.contactId):
 					break
-			if self.offset == 0: raise StopIteration()
+				event = None # to avoid being matched as success on iteration end
+			if (event==None) and (self.offset == 0): raise StopIteration()
 			event.data = self.db.decode_event_data(event)
 			return event
 	
@@ -1168,65 +1170,90 @@ def main():
 	parser = argparse.ArgumentParser(description="Parse and print Miranda.",
 		parents=[coreutils.argparser()])
 	parser.add_argument("dbname", help='path to database file')
-	parser.add_argument("--writeable", help='opens the database for writing (WARNING: enables editing functions!)', action='store_true')
-	parser.add_argument("--dump-modules", help='prints all module names', action='store_true')
-	parser.add_argument("--add-module", help='adds module name', type=str, metavar='module name')
-	parser.add_argument("--dump-contacts-low", help='prints all contacts (low-level)', action='store_true')
-	parser.add_argument("--dump-contacts", help='prints all contacts', action='store_true')
-	parser.add_argument("--dump-settings", help='prints all settings for the given contact', type=str, action='append')
-	parser.add_argument("--event-stats", help='collects event statistics', action='store_true')
-	parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
-	parser.add_argument("--bad-events", help='dumps only bad events', action='store_true')
-	parser.add_argument("--unsupported-events", help='dumps only unsupported events', action='store_true')
-	parser.add_argument("--add-event", help='adds a simple message event to the end of the chain', type=str, metavar='module_name,contact_id,event text')
-	parser.add_argument("--delete-event", help='deletes event at a given offset', type=int, metavar='offset')
+	parser.add_argument("--write", help='opens the database for writing (WARNING: enables editing functions!)', action='store_true')
+	subparsers = parser.add_subparsers(title='subcommands')
+	
+	sparser = subparsers.add_parser('dump-modules', help='prints all module names')
+	sparser.set_defaults(func=dump_modules)
+	
+	sparser = subparsers.add_parser('add-module', help='add-module')
+	sparser.add_argument('module-name', type=str, nargs='+', help='add module with this name')
+	sparser.set_defaults(func=add_module)
+	
+	sparser = subparsers.add_parser('dump-contacts', help='prints contacts')
+	sparser.add_argument('contact', type=str, nargs='*', help='print these contacts (default: all)')
+	sparser.add_argument("--low", help='prints low-level contact info', action='store_true')
+	sparser.set_defaults(func=dump_contacts)
+	
+	sparser = subparsers.add_parser('dump-settings', help='prints settings for the given contact')
+	sparser.add_argument('contact', type=str, nargs='*', help='print settings for these contacts (default: all)')
+	sparser.set_defaults(func=dump_settings)
+	
+	sparser = subparsers.add_parser('event-stats', help='collects event statistics')
+	sparser.set_defaults(func=event_stats)
+	
+	sparser = subparsers.add_parser('dump-events', help='prints all events for the given contacts')
+	sparser.add_argument('contact', type=str, nargs='+', help='print events for these contacts')
+	sparser.add_argument("--nometa", help='dumps events attached to this contact but not belonging to it', action='store_true')
+	sparser.add_argument("--bad", help='dumps only bad events', action='store_true')
+	sparser.add_argument("--unsupported", help='dumps only unsupported events', action='store_true')
+	sparser.set_defaults(func=dump_events)
+
+	sparser = subparsers.add_parser('add-event', help='adds a simple message event to the end of the chain')
+	sparser.add_argument('--contact', type=int, required=True, metavar='contact id')
+	sparser.add_argument('--text', type=str, required=True, metavar='event text')
+	sparser.add_argument('--module', type=str, metavar='module name (default: contact\'s proto)')
+	sparser.add_argument('--timestamp', type=int, metavar='timestamp for the event (default: now)')
+	sparser.set_defaults(func=add_event)
+
+	sparser = subparsers.add_parser('delete-event', help='deletes event at a given offset')
+	sparser.add_argument('offset', type=int, nargs='+', help='offset to delete an event at')
+	sparser.set_defaults(func=delete_event)
+
 	args = parser.parse_args()
 	coreutils.init(args)
 	
-	db = MirandaDbxMmap(args.dbname, writeable=args.writeable)
+	db = MirandaDbxMmap(args.dbname, writeable=args.write)
 	
-	if args.dump_modules:
-		dump_modules(db)
-	
-	if args.add_module:
-		db.add_module_name(args.add_module)
-	
-	if args.dump_contacts_low:
-		dump_contacts_low(db)
-	
-	if args.dump_contacts:
-		dump_contacts(db)
-	
-	if args.dump_settings:
-		for contact_name in args.dump_settings:
-			for contact in db.contacts_by_mask(contact_name):
-				dump_settings(db, contact)
-	
-	if args.dump_events:
-		params = {}
-		params['bad_only'] = args.bad_events
-		params['unsupported_only'] = args.unsupported_events
-		for contact_name in args.dump_events:
-			for contact in db.contacts_by_mask(contact_name):
-				dump_events(db, contact, params)
-	
-	if args.event_stats:
-		event_stats(db)
-	
-	if args.add_event:
-		add_event(db, args.add_event.split(',',3))
-	if args.delete_event:
-		delete_event(db, args.delete_event)
+	if args.func <> None:
+		args.func(db, args)
 
-def dump_contacts_low(db):
-	totalEvents = 0
-	for contact in ([db.user] + db.contacts()):
-		pprint.pprint(vars(contact))
-		totalEvents += contact.eventCount
 
-def dump_contacts(db):
+def dump_modules(db, args):
+	moduleOffset = db.header.ofsModuleNames
+	totalModules = 0
+	while moduleOffset <> 0:
+		module = db.read(DBModuleName(), moduleOffset)
+		print "Module: "+module.name
+		totalModules += 1
+		moduleOffset = module.ofsNext
+
+def add_module(db, args):
+	for module_name in args.module_name:
+		db.add_module_name(module_name)
+
+
+# Returns all contacts in the database
+def all_contacts(db):
+	return ([db.user] + db.contacts())
+
+# Selects all contacts matching any pattern in the list
+def select_contacts(db, list):
+	ret = []
+	for contact_name in list:
+		ret += db.contacts_by_mask(contact_name)	# Too lazy to weed out duplicates atm
+	return ret
+
+# Selects all contacts matching any pattern in the list, or all contacts if the list is not given
+def select_contacts_opt(db, list):
+	return select_contacts(db, list) if list else all_contacts(db)
+
+def dump_contacts(db, args):
 	totalEvents = 0
-	for contact in ([db.user] + db.contacts()):
+	for contact in select_contacts_opt(db, args.contact):
+		if args.low:
+			pprint.pprint(vars(contact))
+			continue
 		print unicode(contact.display_name)
 		print u"  Protocol: "+unicode(contact.protocol)
 		print u"  ID: "+unicode(contact.id)
@@ -1239,24 +1266,17 @@ def dump_contacts(db):
 		totalEvents += contact.eventCount
 	print "Total events: "+unicode(totalEvents)
 
-def dump_modules(db):
-	moduleOffset = db.header.ofsModuleNames
-	totalModules = 0
-	while moduleOffset <> 0:
-		module = db.read(DBModuleName(), moduleOffset)
-		print "Module: "+module.name
-		totalModules += 1
-		moduleOffset = module.ofsNext
+def dump_settings(db, args):
+	for contact in select_contacts_opt(db, args.contact):
+		display_name = ''
+		if hasattr(contact, 'display_name') and contact.display_name:
+			display_name = unicode(contact.display_name)
+		if hasattr(contact, 'protocol') and contact.protocol:
+			display_name += ' ('+contact.protocol+')'
+		print display_name
+		for name in contact.settings:
+			print unicode(contact.settings[name])
 
-def dump_settings(db, contact):
-	display_name = ''
-	if hasattr(contact, 'display_name') and contact.display_name:
-		display_name = unicode(contact.display_name)
-	if hasattr(contact, 'protocol') and contact.protocol:
-		display_name += ' ('+contact.protocol+')'
-	print display_name
-	for name in contact.settings:
-		print unicode(contact.settings[name])
 
 def event_stats(db):
 	stats = {}
@@ -1308,6 +1328,24 @@ def event_stats_contact(db, contact, stats):
 		
 		ofsEvent = event.ofsNext
 
+
+def dump_events(db, args):
+	def should_print_event(event):
+		if args.bad and hasattr(data, 'problem'):
+			return True
+		if args.unsupported and (getattr(data, 'type', None) in ['unsupported', 'encrypted']):
+			return True
+		return not (args.bad or args.unsupported)
+	for contact in select_contacts(db, args.contact):
+		print "Events for "+contact.display_name+": "
+		for event in db.get_events(contact, with_metacontacts=not (args.nometa)):
+			data = event.data
+			if hasattr(data, 'problem'):
+				data.offset = event.offset
+			if not should_print_event(event):
+				continue
+			print format_event(db, event, data)
+
 # Produces a pretty line describing the event
 def format_event(db, event, data = None):
 	if data == None:
@@ -1324,45 +1362,37 @@ def format_event(db, event, data = None):
 		data = unicode(vars(data))
 	return str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
 
-def dump_events(db, contact, params):
-	def should_print_event(event):
-		if params['bad_only'] and hasattr(data, 'problem'):
-			return True
-		if params['unsupported_only'] and (getattr(data, 'type', None) in ['unsupported', 'encrypted']):
-			return True
-		return not (params['bad_only'] or params['unsupported_only'])
-	print "Events for "+contact.display_name+": "
-	for event in db.get_events(contact):
-		data = event.data
-		if hasattr(data, 'problem'):
-			data.offset = event.offset
-		if not should_print_event(event):
-			continue
-		print format_event(db, event, data)
 
-def add_event(db, params):
-	assert(len(params)==3)
-	contact = db.contact_by_id(int(params[1]))
+def add_event(db, args):
+	contact = db.contact_by_id(args.contact)
 	if contact == None:
-		raise Exception("Contact not found with ID: "+params[1])
+		raise Exception("Contact not found with ID: "+str(args.contact))
 	event = DBEvent()
-	event.contactID = int(params[1])
-	event.ofsModuleName = db.find_module_name(params[0])
+	event.contactID = args.contact
+	if not args.module:
+		args.module = contact.protocol
+		if not args.module:
+			raise Exception('Contact has no protocol, please specify module name')
+	event.ofsModuleName = db.find_module_name(args.module)
 	if event.ofsModuleName == None:
-		raise Exception("Module not found: "+params[0])
-	event.timestamp = calendar.timegm(datetime.now().timetuple())
+		raise Exception("Module not found: "+args.module)
+	if args.timestamp:
+		event.timestamp = args.timestamp
+	else:
+		event.timestamp = calendar.timegm(datetime.now().timetuple())
 	event.flags = event.DBEF_UTF
 	event.eventType = 0
-	event.blob = params[2].encode('utf-8')
+	event.blob = args.text.encode('utf-8')
 	print vars(contact)
 	print vars(event)
 	db.add_event(contact, event)
 
-def delete_event(db, offset):
-	# Verify that this is an event
-	event = db.read_event(offset)	# will raise on bad signature
-	# Delete it
-	db.delete_event(offset)
+def delete_event(db, args):
+	for offset in args.offset:
+		# Verify that this is an event
+		event = db.read_event(offset)	# will raise on bad signature
+		# Delete it
+		db.delete_event(offset)
 
 if __name__ == "__main__":
 	sys.exit(main())
