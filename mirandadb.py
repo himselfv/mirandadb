@@ -74,8 +74,12 @@ class DBStruct(object):
 				_tuple = tuple(getattr(self, field) for field in self.FIELDS)
 			else:
 				_tuple = self.pack()
-			buffer = struct.pack(self.FORMAT, _tuple)
+			buffer = struct.pack(self.FORMAT, *_tuple)
 			file.write(buffer)
+	def size(self):
+		if hasattr(self, 'FORMAT'):
+			return struct.calcsize(self.FORMAT)
+		return 0
 
 """
 BYTE signature[16];     // 'Miranda ICQ DB',0,26
@@ -83,9 +87,9 @@ BYTE signature[16];     // 'Miranda ICQ DB',0,26
 DWORD version;          // as 4 bytes, ie 1.2.3.10 = 0x0102030a
 DWORD ofsFileEnd;       // offset of the end of the database - place to write new structures
 DWORD slackSpace;       // a counter of the number of bytes that have been
-									// wasted so far due to deleting structures and/or
-									// re-making them at the end. We should compact when
-									// this gets above a threshold
+						// wasted so far due to deleting structures and/or
+						// re-making them at the end. We should compact when
+						// this gets above a threshold
 DWORD contactCount;     // number of contacts in the chain,excluding the user
 DWORD ofsFirstContact;  // offset to first DBContact in the chain
 DWORD ofsUser;          // offset to DBContact representing the user
@@ -120,10 +124,15 @@ class DBModuleName(DBStruct):
 		'cbName'
 	]
 	def read(self, file):
-		# read the static part
 		super(DBModuleName, self).read(file)
-		# read the dynamic part
 		self.name = unicode(file.read(self.cbName).decode('ascii'))
+	def write(self, file, offset=None):
+		nameBytes = self.name.encode('ascii')
+		self.cbName = len(nameBytes)
+		super(DBModuleName, self).write(file, offset)
+		file.write(nameBytes)
+	def size(self):
+		return super(DBModuleName, self).size() + len(self.name.encode('ascii'))
 
 
 """
@@ -550,7 +559,6 @@ class DBEvent(DBStruct):
 		# read the dynamic part
 		self.blob = file.read(self.cbBlob)
 
-
 #
 # Event content types
 #
@@ -731,8 +739,9 @@ class DBVKontakteUserDeactivateActionBlob:
 
 class MirandaDbxMmap(object):
 	file = None
-	def __init__(self, filename):
-		self.file = open(filename, "rb")
+	def __init__(self, filename, writeable=False):
+		open_mode = "rb+" if writeable else "rb"
+		self.file = open(filename, open_mode)
 		self.filename = filename
 		self.header = self.read(DBHeader())
 		self.user = self.read(DBContact(), self.header.ofsUser)
@@ -747,6 +756,41 @@ class MirandaDbxMmap(object):
 		cl.read(self.file)
 		log.debug(vars(cl))
 		return cl
+	
+	# By default we write at the offset specified in the structure
+	def write(self, cl, offset):
+		self.file.seek(offset, 0)
+		cl.write(self.file)
+	
+	
+	# Reserves space of a given size at the end of the file. Returns its offset
+	def reserve_space(self, size):
+		offset = self.header.ofsFileEnd
+		self.header.ofsFileEnd += size
+		# If we seek() and write() there, the file will automatically be expanded,
+		# but we might exit before that so let's make sure Miranda finds the file correct.
+		self.file.seek(0, os.SEEK_END)
+		fsize = self.file.tell()
+		if fsize < self.header.ofsFileEnd:
+			self.file.seek(self.header.ofsFileEnd+4096)
+			self.file.write('\0')
+		self.write(self.header, 0)
+		return offset
+	# Reallocates space of a given size, possibly inplace. Returns its new offset
+	def realloc_space(self, offset, old_size, new_size):
+		if old_size >= new_size:
+			if old_size > new_size:
+				self.header.slackSpace += (new_size-old_size)
+				self.write(self.header, offset=0)
+			return offset
+		self.header.slackSpace += old_size
+		# ^ do not commit, we'll write more in a moment
+		return reserve_space(new_size)
+	# Releases a chunk of space
+	def free_space(self, offset, size):
+		self.header.slackSpace += size
+		self.write(self.header, 0)
+
 
 	#
 	# Modules and protocols
@@ -767,7 +811,27 @@ class MirandaDbxMmap(object):
 		if not moduleName in self._baseProtocols:
 			self._baseProtocols[moduleName] = self.user.get_setting(moduleName, "AM_BaseProto")
 		return self._baseProtocols[moduleName]
-
+	
+	# Returns ofsModuleName for the newly registered module
+	def add_module_name(self, name):
+		# Insert new module name
+		moduleName = DBModuleName()
+		moduleName.name = name
+		moduleName.ofsNext = 0
+		moduleName.offset = self.reserve_space(moduleName.size())
+		self.write(moduleName, moduleName.offset)
+		# Update last module name to point to this
+		if self.header.ofsModuleNames == 0:
+			self.header.ofsModuleNames = moduleName.offset
+		else:
+			offset = self.header.ofsModuleNames
+			while True:
+				lastModuleName = self.read(DBModuleName(), offset)
+				if lastModuleName.ofsNext == 0:
+					break
+				offset = lastModuleName.ofsNext
+			lastModuleName.ofsNext = moduleName.offset
+			self.write(lastModuleName, lastModuleName.offset)
 
 	#
 	# Contacts
@@ -1041,7 +1105,9 @@ def main():
 	parser = argparse.ArgumentParser(description="Parse and print Miranda.",
 		parents=[coreutils.argparser()])
 	parser.add_argument("dbname", help='path to database file')
+	parser.add_argument("--writeable", help='opens the database for writing (otherwise all functions that change it will not work)', action='store_true')
 	parser.add_argument("--dump-modules", help='prints all module names', action='store_true')
+	parser.add_argument("--add-module", help='adds module name', type=str, metavar='module name')
 	parser.add_argument("--dump-contacts-low", help='prints all contacts (low-level)', action='store_true')
 	parser.add_argument("--dump-contacts", help='prints all contacts', action='store_true')
 	parser.add_argument("--dump-settings", help='prints all settings for the given contact', type=str, action='append')
@@ -1052,16 +1118,19 @@ def main():
 	args = parser.parse_args()
 	coreutils.init(args)
 	
-	db = MirandaDbxMmap(args.dbname)
+	db = MirandaDbxMmap(args.dbname, writeable=args.writeable)
+	
+	if args.dump_modules:
+		dump_modules(db)
+	
+	if args.add_module:
+		db.add_module_name(args.add_module)
 	
 	if args.dump_contacts_low:
 		dump_contacts_low(db)
 	
 	if args.dump_contacts:
 		dump_contacts(db)
-	
-	if args.dump_modules:
-		dump_modules(db)
 	
 	if args.dump_settings:
 		for contact_name in args.dump_settings:
