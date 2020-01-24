@@ -9,6 +9,8 @@ import coreutils
 import pprint # pretty printing
 import fnmatch # wildcard matching
 import utfutils
+from datetime import datetime # for datetime.now
+import calendar
 
 
 # Miranda dbx_mmap database reader
@@ -554,10 +556,13 @@ class DBEvent(DBStruct):
 		'cbBlob'
 	]
 	def read(self, file):
-		# read the static part
 		super(DBEvent, self).read(file)
-		# read the dynamic part
 		self.blob = file.read(self.cbBlob)
+	def write(self, file):
+		self.cbBlob = len(self.blob)
+		super(DBEvent, self).write(file)
+		file.write(self.blob)
+
 
 #
 # Event content types
@@ -801,6 +806,16 @@ class MirandaDbxMmap(object):
 			module = self.read(DBModuleName(), ofsModule)
 			self._moduleNames[ofsModule] = module.name
 		return self._moduleNames[ofsModule]
+	def find_module_name(self, name):
+		# TODO: Can optimize by loading the list once and caching
+		# Then all reads and writes to modules must go through cache-aware function
+		ofsModule = self.header.ofsModuleNames
+		while ofsModule <> '':
+			moduleName = self.read(DBModuleName(), ofsModule)
+			if moduleName.name.lower() == name.lower():
+				return ofsModule
+			ofsModule = moduleName.ofsNext
+		return None
 
 	# For modules that are accounts, returns their base protocol (string)
 	_baseProtocols = {}
@@ -919,6 +934,54 @@ class MirandaDbxMmap(object):
 	#
 	def read_event(self, offset):
 		return self.read(DBEvent(), offset)
+	
+	# Adds a new event to the given contact, inserting it after the given event.
+	# Returns new event offset.
+	# TODO: Option to automatically determine position by timestamp
+	def add_event(self, contact, event, insert_after = None):
+		event.offset = self.reserve_space(event.size())
+		if insert_after == None:
+			if contact.ofsFirstEvent <> 0:
+				evtNext = self.read_event(contact.ofsFirstEvent)
+			else:
+				evtNext = None
+			contact.ofsFirstEvent = event.offset
+		elif insert_after.ofsNext <> 0:
+			evtNext = self.read_event(insert_after.ofsNext)
+		else:
+			evtNext = None
+		event.ofsPrev = insert_after.offset if insert_after <> None else 0
+		event.ofsNext = evtNext.offset if evtNext <> None else 0
+		self.write(event, event.offset)
+		if evtNext <> None:
+			evtNext.ofsPrev = event.offset
+			self.write(evtNext, evtNext.offset)
+		if insert_after <> None:
+			insert_after.ofsNext = event.offset
+			self.write(insert_after, insert_after.offset)
+		contact.eventCount += 1
+		self.write(contact, contact.offset)
+		return event.offset
+	
+	# Deletes event from the given contact, linking events around it together
+	def delete_event(self, contact, event):
+		ofsPrev = event.ofsPrev
+		ofsNext = event.ofsNext
+		# Link events around this one together
+		if ofsPrev == 0:
+			contact.ofsFirstEvent = ofsNext
+			# Do not write out, will modify more
+		else:
+			evtPrev = self.read_event(ofsPrev)
+			evtPrev.ofsNext = ofsNext
+			self.write(evtPrev, evtPrev.offset)	# The size shouldn't have changed
+		if ofsNext <> 0:
+			evtNext = self.read_event(ofsNext)
+			evtNext.ofsPrev = ofsPrev
+			self.write(evtNext, evtNext.offset)	# The size shouldn't have changed
+		contact.eventCount -= 1
+		self.write(contact, contact.offset)
+		self.free_space(event.offset)
 	
 	# Retrieves and decodes all events for the contact. Handles MetaContacts transparently.
 	#	contact_id: Return only events for this contactId (MetaContacts can host multiple)
@@ -1105,7 +1168,7 @@ def main():
 	parser = argparse.ArgumentParser(description="Parse and print Miranda.",
 		parents=[coreutils.argparser()])
 	parser.add_argument("dbname", help='path to database file')
-	parser.add_argument("--writeable", help='opens the database for writing (otherwise all functions that change it will not work)', action='store_true')
+	parser.add_argument("--writeable", help='opens the database for writing (WARNING: enables editing functions!)', action='store_true')
 	parser.add_argument("--dump-modules", help='prints all module names', action='store_true')
 	parser.add_argument("--add-module", help='adds module name', type=str, metavar='module name')
 	parser.add_argument("--dump-contacts-low", help='prints all contacts (low-level)', action='store_true')
@@ -1115,6 +1178,8 @@ def main():
 	parser.add_argument("--dump-events", help='prints all events for the given contact', type=str, action='append')
 	parser.add_argument("--bad-events", help='dumps only bad events', action='store_true')
 	parser.add_argument("--unsupported-events", help='dumps only unsupported events', action='store_true')
+	parser.add_argument("--add-event", help='adds a simple message event to the end of the chain', type=str, metavar='module_name,contact_id,event text')
+	parser.add_argument("--delete-event", help='deletes event at a given offset', type=int, metavar='offset')
 	args = parser.parse_args()
 	coreutils.init(args)
 	
@@ -1147,6 +1212,11 @@ def main():
 	
 	if args.event_stats:
 		event_stats(db)
+	
+	if args.add_event:
+		add_event(db, args.add_event.split(',',3))
+	if args.delete_event:
+		delete_event(db, args.delete_event)
 
 def dump_contacts_low(db):
 	totalEvents = 0
@@ -1269,6 +1339,30 @@ def dump_events(db, contact, params):
 		if not should_print_event(event):
 			continue
 		print format_event(db, event, data)
+
+def add_event(db, params):
+	assert(len(params)==3)
+	contact = db.contact_by_id(int(params[1]))
+	if contact == None:
+		raise Exception("Contact not found with ID: "+params[1])
+	event = DBEvent()
+	event.contactID = int(params[1])
+	event.ofsModuleName = db.find_module_name(params[0])
+	if event.ofsModuleName == None:
+		raise Exception("Module not found: "+params[0])
+	event.timestamp = calendar.timegm(datetime.now().timetuple())
+	event.flags = event.DBEF_UTF
+	event.eventType = 0
+	event.blob = params[2].encode('utf-8')
+	print vars(contact)
+	print vars(event)
+	db.add_event(contact, event)
+
+def delete_event(db, offset):
+	# Verify that this is an event
+	event = db.read_event(offset)	# will raise on bad signature
+	# Delete it
+	db.delete_event(offset)
 
 if __name__ == "__main__":
 	sys.exit(main())
