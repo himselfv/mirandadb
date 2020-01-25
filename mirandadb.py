@@ -986,6 +986,17 @@ class MirandaDbxMmap(object):
 		self.write(contact, contact.offset)
 		self.free_space(event.offset)
 	
+	# Returns the last event in the event chain starting with a given event,
+	# or the chain for a given contact
+	def get_last_event(self, event_or_contact):
+		if isinstance(event_or_contact, DBContact):
+			event_or_contact = self.read_event(event_or_contact.ofsFirstEvent) if event_or_contact.ofsFirstEvent <> 0 else None
+		if event_or_contact == None:
+			return None
+		while event_or_contact.ofsNext <> 0:
+			event_or_contact = self.read_event(event_or_contact.ofsNext)
+		return event_or_contact
+	
 	# Retrieves and decodes all events for the contact. Handles MetaContacts transparently.
 	#	contact_id: Return only events for this contactId (MetaContacts can host multiple)
 	#	with_metacontacts: Locate this contact events in MetaContacts too.
@@ -1281,7 +1292,7 @@ def dump_settings(db, args):
 			print unicode(contact.settings[name])
 
 
-def event_stats(db):
+def event_stats(db, args):
 	stats = {}
 	stats['count'] = 0
 	stats['flags'] = {'sent': 0, 'read': 0, 'rtl': 0, 'utf': 0, 'encrypted': 0, 'other': 0}
@@ -1386,7 +1397,8 @@ def add_event(db, args):
 	event.flags = event.DBEF_UTF
 	event.eventType = 0
 	event.blob = args.text.encode('utf-8')
-	db.add_event(contact, event)
+	insert_after = db.get_last_event(contact)
+	db.add_event(contact, event, insert_after=insert_after)
 
 def delete_event(db, args):
 	for offset in args.offset:
