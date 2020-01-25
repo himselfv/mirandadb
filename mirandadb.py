@@ -803,6 +803,20 @@ class MirandaDbxMmap(object):
 	#
 	# Modules and protocols
 	#
+	def read_module(self, offset):
+		return self.read(DBModuleName(), offset)
+	# Cached module list
+	# All reads and writes to modules must go through cache-aware function
+	_modules = None
+	def get_modules(self):
+		if self._modules == None:
+			moduleOffset = self.header.ofsModuleNames
+			self._modules = []
+			while moduleOffset <> 0:
+				module = self.read(DBModuleName(), moduleOffset)
+				self._modules.append(module)
+				moduleOffset = module.ofsNext
+		return self._modules
 	_moduleNames = {}
 	def get_module_name(self, ofsModule):
 		if not ofsModule in self._moduleNames:
@@ -810,14 +824,9 @@ class MirandaDbxMmap(object):
 			self._moduleNames[ofsModule] = module.name
 		return self._moduleNames[ofsModule]
 	def find_module_name(self, name):
-		# TODO: Can optimize by loading the list once and caching
-		# Then all reads and writes to modules must go through cache-aware function
-		ofsModule = self.header.ofsModuleNames
-		while ofsModule <> '':
-			moduleName = self.read(DBModuleName(), ofsModule)
-			if moduleName.name.lower() == name.lower():
-				return ofsModule
-			ofsModule = moduleName.ofsNext
+		for module in self.get_modules():
+			if module.name.lower() == name.lower():
+				return module.offset
 		return None
 
 	# For modules that are accounts, returns their base protocol (string)
@@ -940,7 +949,6 @@ class MirandaDbxMmap(object):
 	
 	# Adds a new event to the given contact, inserting it after the given event.
 	# Returns new event offset.
-	# TODO: Option to automatically determine position by timestamp
 	def add_event(self, contact, event, insert_after = None):
 		event.offset = self.reserve_space(event.size())
 		if insert_after == None:
@@ -988,15 +996,15 @@ class MirandaDbxMmap(object):
 	
 	# Returns the last event in the event chain starting with a given event,
 	# or the chain for a given contact
-	def get_last_event(self, event_or_contact):
-		if isinstance(event_or_contact, DBContact):
-			event_or_contact = self.read_event(event_or_contact.ofsFirstEvent) if event_or_contact.ofsFirstEvent <> 0 else None
-		if event_or_contact == None:
+	def get_last_event(self, event):
+		if isinstance(event, DBContact):
+			event = self.read_event(event.ofsFirstEvent) if event.ofsFirstEvent <> 0 else None
+		if event == None:
 			return None
-		while event_or_contact.ofsNext <> 0:
-			event_or_contact = self.read_event(event_or_contact.ofsNext)
-		return event_or_contact
-	
+		while event.ofsNext <> 0:
+			event = self.read_event(event.ofsNext)
+		return event
+
 	# Retrieves and decodes all events for the contact. Handles MetaContacts transparently.
 	#	contact_id: Return only events for this contactId (MetaContacts can host multiple)
 	#	with_metacontacts: Locate this contact events in MetaContacts too.
@@ -1188,6 +1196,8 @@ def main():
 	subparsers = parser.add_subparsers(title='subcommands')
 	
 	sparser = subparsers.add_parser('dump-modules', help='prints all module names')
+	sparser.add_argument('offset', type=int, nargs='*', help='print module names from these offsets (default: all by list)')
+	sparser.add_argument('--low', action='store_true', help='print low-level info')
 	sparser.set_defaults(func=dump_modules)
 	
 	sparser = subparsers.add_parser('add-module', help='add-module')
@@ -1196,7 +1206,7 @@ def main():
 	
 	sparser = subparsers.add_parser('dump-contacts', help='prints contacts')
 	sparser.add_argument('contact', type=str, nargs='*', help='print these contacts (default: all)')
-	sparser.add_argument("--low", help='prints low-level contact info', action='store_true')
+	sparser.add_argument("--low", action='store_true', help='prints low-level contact info')
 	sparser.set_defaults(func=dump_contacts)
 	
 	sparser = subparsers.add_parser('dump-settings', help='prints settings for the given contact')
@@ -1211,6 +1221,7 @@ def main():
 	sparser.add_argument("--nometa", help='dumps events attached to this contact but not belonging to it', action='store_true')
 	sparser.add_argument("--bad", help='dumps only bad events', action='store_true')
 	sparser.add_argument("--unsupported", help='dumps only unsupported events', action='store_true')
+	sparser.add_argument("--low", help='print low-level info', action='store_true')
 	sparser.set_defaults(func=dump_events)
 
 	sparser = subparsers.add_parser('add-event', help='adds a simple message event to the end of the chain')
@@ -1218,6 +1229,7 @@ def main():
 	sparser.add_argument('--text', type=str, required=True, metavar='event text')
 	sparser.add_argument('--module', type=str, metavar='module name (default: contact\'s proto)')
 	sparser.add_argument('--timestamp', type=int, metavar='timestamp for the event (default: now)')
+	sparser.add_argument('--after', type=int, metavar='event offset', help='insert this event after this one in the chain (0: first; -1: last; default: according to timestamp)')
 	sparser.set_defaults(func=add_event)
 
 	sparser = subparsers.add_parser('delete-event', help='deletes event at a given offset')
@@ -1234,13 +1246,17 @@ def main():
 
 
 def dump_modules(db, args):
-	moduleOffset = db.header.ofsModuleNames
-	totalModules = 0
-	while moduleOffset <> 0:
-		module = db.read(DBModuleName(), moduleOffset)
-		print "Module: "+module.name
-		totalModules += 1
-		moduleOffset = module.ofsNext
+	if args.offset:
+		list = []
+		for offset in args.offset:
+			list.append(db.read_module(offset))
+	else:
+		list = db.get_modules()
+	for module in list:
+		if args.low:
+			print str(vars(module))
+		else:
+			print "Module: "+module.name
 
 def add_module(db, args):
 	for module_name in args.module_name:
@@ -1358,7 +1374,10 @@ def dump_events(db, args):
 				data.offset = event.offset
 			if not should_print_event(event):
 				continue
-			print format_event(db, event, data)
+			if args.low:
+				print str(vars(event))
+			else:
+				print format_event(db, event, data)
 
 # Produces a pretty line describing the event
 def format_event(db, event, data = None):
@@ -1394,10 +1413,22 @@ def add_event(db, args):
 		event.timestamp = args.timestamp
 	else:
 		event.timestamp = calendar.timegm(datetime.now().timetuple())
+	print str(args.after)
+	if args.after == None:
+		insert_after = None
+		for prev_event in db.get_events(contact):
+			if prev_event.timestamp>event.timestamp: break
+			insert_after = prev_event
+	elif args.after == 0:
+		insert_after = None
+	elif args.after < 0:
+		insert_after = db.get_last_event(contact)
+	else:
+		insert_after = db.read_event(args.after)	# verifies that it's an event
 	event.flags = event.DBEF_UTF
 	event.eventType = 0
 	event.blob = args.text.encode('utf-8')
-	insert_after = db.get_last_event(contact)
+	
 	db.add_event(contact, event, insert_after=insert_after)
 
 def delete_event(db, args):
