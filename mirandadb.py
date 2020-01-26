@@ -577,8 +577,15 @@ class DBEventBlob(DBStruct):
 		if file <> None:
 			read_op = getattr(file, "read", None)
 			if not callable(read_op):
+				buf = file
 				file = io.BytesIO(file)
+			else:
+				buf = none
 			self.read(file)
+			pos = file.tell()
+			if buf and not hasattr(self, 'problem') and (len(buf) > pos):
+				self.problem = 'Bytes remaining in the buffer ('+str(pos)+' out of '+str(len(buf))+')'
+				self.tail = buf[pos:]
 	
 	def try_read_str(self, file, default = None):
 		s = ""
@@ -1090,7 +1097,8 @@ class MirandaDbxMmap(object):
 				unicode = _unicode
 			)
 		if hasattr(ret, 'problem'):
-			log.warning('Event@'+str(event.offset)+': '+ret.problem)
+			clname = ret.__class__.__name__ # or 'Event'
+			log.warning(clname+'@'+str(event.offset)+': '+ret.problem)
 			ret.hex = event.blob.encode('hex')	# Full message hex for debugging
 		return ret
 	
@@ -1217,7 +1225,7 @@ def main():
 	sparser.set_defaults(func=event_stats)
 	
 	sparser = subparsers.add_parser('dump-events', help='prints all events for the given contacts')
-	sparser.add_argument('contact', type=str, nargs='+', help='print events for these contacts')
+	sparser.add_argument('contact', type=str, nargs='*', help='print events for these contacts')
 	sparser.add_argument("--nometa", help='dumps events attached to this contact but not belonging to it', action='store_true')
 	sparser.add_argument("--bad", help='dumps only bad events', action='store_true')
 	sparser.add_argument("--unsupported", help='dumps only unsupported events', action='store_true')
@@ -1366,7 +1374,7 @@ def dump_events(db, args):
 		if args.unsupported and (getattr(data, 'type', None) in ['unsupported', 'encrypted']):
 			return True
 		return not (args.bad or args.unsupported)
-	for contact in select_contacts(db, args.contact):
+	for contact in select_contacts_opt(db, args.contact):
 		print "Events for "+contact.display_name+": "
 		for event in db.get_events(contact, with_metacontacts=not (args.nometa)):
 			data = event.data
