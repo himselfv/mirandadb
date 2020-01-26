@@ -70,6 +70,36 @@ def dump_events(db, args):
 		print '\n'.join([ repr(key) + ': ' + repr(value) for (key, value) in bad_offsets.items()])
 
 
+"""
+Tries to fix corrupted messages by importing messages from older, non-corrutped database.
+1. Imports all old DB messages missing from the newer DB. (== 'mirdiff merge')
+2. Deletes new DB messages which:
+   - are missing from the older DB
+   - have likely prototypes in the older DB
+
+So for example. Here's a typical situation *for a specific timestamp*:
+DB_old:
+  Message1
+  Message1  [a duplicate]
+  Message2
+  Message3
+DB_new:
+  Message1
+  Message2
+  Message2  [a duplicate]
+  CorruptedMessage   [may be Message3, or another duplicate of Message1 or Message2]
+
+Message3 will be imported.
+If any of [Message1, Message2, Message3] matching CorruptedMessage module, type and flags, CorruptedMessage will be deleted.
+
+This doesn't analyze whether CorruptedMessage is in fact corrupt. Too hard to tell.
+TODO:
+- Print out all deleted messages
+"""
+def restore_events(db, args):
+	# TODO: Imlement based on mirdiff/merge
+	pass
+
 # Main
 parser = argparse.ArgumentParser(description="Analyzes Miranda database for corruption.",
 	parents=[coreutils.argparser()])
@@ -91,4 +121,3 @@ db = MirandaDbxMmapChk(args.dbname)
 	
 if args.func <> None:
 	args.func(db, args)
-
