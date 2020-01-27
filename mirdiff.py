@@ -28,12 +28,14 @@ def map_modules(db1, db2):
 			ret[None].append(module2.offset)
 	return ret
 
-def print_modules_diff(db1, db2):
-	diff = map_modules(db1, db2)
+def print_modules_diff(db1, db2, diff):
 	missing = [offset for offset in diff.keys() if (offset<>None) and (diff[offset]==None)]
 	new = diff[None]
 	for offset in missing:
-		print "--DB2: "+db1.get_module_name(offset)
+		moduleNane = db1.get_module_name(offset)
+		print "--DB2: "+moduleName
+		if args.merge:
+			new_offset = db2.add_module_name(moduleName)
 	for offset in new:
 		print "++DB2: "+db2.get_module_name(offset)
 
@@ -245,6 +247,10 @@ def main():
 	parser.add_argument("dbname2", help='path to newer database file')
 	parser.add_argument("--write", help='opens the databases for writing (WARNING: enables editing functions!)', action='store_true')
 	parser.add_argument("--contact", type=str, help='diff only this contact')
+	parser.add_argument("--modules", action='store_true', help='diff/merge modules')
+	parser.add_argument("--contacts", action='store_true', help='diff/merge contacts')
+	parser.add_argument("--events", action='store_true', help='diff/merge events')
+	
 	parser.add_argument("--process-new", help='processes NEW events in addition to changed or missing events', action='store_true')
 	parser.add_argument("--merge-messages", action='store_true', help='imports all missing messages from DB1 into DB2')
 	global args
@@ -254,27 +260,28 @@ def main():
 	db1 = mirandadb.MirandaDbxMmap(args.dbname1)
 	db2 = mirandadb.MirandaDbxMmap(args.dbname2, writeable=args.write)
 
-	print_modules_diff(db1, db2)
+	global modules_map
+	modules_map = map_modules(db1, db2)
+	if args.modules:
+		print "Modules:"
+		print_modules_diff(db1, db2, modules_map)
 
-	if args.contact:
-		contacts1 = db1.contacts_by_mask(args.contact)
-		contacts2 = db2.contacts_by_mask(args.contact)
-	else:
-		contacts1 = db1.contacts()
-		contacts2 = db2.contacts()
+	global contacts_map
+	contacts1 = mirandadb.select_contacts_opt(db1, args.contact)
+	contacts2 = mirandadb.select_contacts_opt(db2, args.contact)
+	contacts_map = compare_contact_lists(contacts1, contacts2)
+	if args.contacts:
+		print "Contacts:"
+		for contact1 in contacts_map['missing1']:
+			print "--DB2: "+contact1.display_name
+		for contact2 in contacts_map['missing2']:
+			print "++DB2: "+contact2.display_name
 
-	ret = compare_contact_lists(contacts1, contacts2)
-	print "The following contacts from DB1 are missing:"
-	for contact1 in ret['missing1']:
-		print contact1.display_name
-	print "The following contacts in DB2 are new:"
-	for contact2 in ret['missing2']:
-		print contact2.display_name
-
-	if not args.contact: # explicitly compare one db.user against another
-		compare_contact_events_print(db1, db2, db1.user, db2.user, merge=args.merge_messages)
-	for (contact1, contact2) in ret['match']:
-		compare_contact_events_print(db1, db2, contact1, contact2, merge=args.merge_messages)
+	if args.events:
+		if not args.contact: # explicitly compare one db.user against another
+			compare_contact_events_print(db1, db2, db1.user, db2.user, merge=args.merge_messages)
+		for (contact1, contact2) in ret['match']:
+			compare_contact_events_print(db1, db2, contact1, contact2, merge=args.merge_messages)
 
 if __name__ == "__main__":
 	sys.exit(main())
