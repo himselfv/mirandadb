@@ -13,6 +13,32 @@ log = logging.getLogger('mirdiff')
 
 
 """
+Modules
+"""
+# Maps DB1 module offsets to DB2 module offsets for the same modules:
+#   DB1_offset	-> DB2_offset / None
+#   None		-> [DB2_offset, DB2_offset...]
+def map_modules(db1, db2):
+	ret = {}
+	ret[None] = []
+	for module1 in db1.get_modules():
+		ret[module1.offset] = db2.find_module_name(module1.name)
+	for module2 in db2.get_modules():
+		if not module2.offset in ret.values():
+			ret[None].append(module2.offset)
+	return ret
+
+def print_modules_diff(db1, db2):
+	diff = map_modules(db1, db2)
+	missing = [offset for offset in diff.keys() if (offset<>None) and (diff[offset]==None)]
+	new = diff[None]
+	for offset in missing:
+		print "--DB2: "+db1.get_module_name(offset)
+	for offset in new:
+		print "++DB2: "+db2.get_module_name(offset)
+
+
+"""
 Contacts
 """
 
@@ -200,12 +226,12 @@ def compare_contact_events_print(db1, db2, contact1, contact2, merge=False):
 			for evt1 in diff.db1:
 				# Convert DB1 event to DB2 event
 				evt2 = copy.copy(evt1)
-					# We would have to map event.contactID -> new_event.contactID,
-					# but thankfully we *match* contacts by IDs so they are by definition equal
+				# We would have to map event.contactID -> new_event.contactID,
+				# but thankfully we *match* contacts by IDs so they are by definition equal
 				evt2.contactID = evt1.contactID
-					# ModuleOffset might've changed - this happens in the wild
-					# ModuleName might've been changed between versions too
-				evt2.ofsModuleName = db2.find_module_name(contact2.protocol) or db2.find_module_name(db1.get_module_name(evt1.ofsModuleName))
+				# Module's offset might've changed - this happens in the wild
+				# Note: Preserve the original event module name, even if the contact protocol have changed
+				evt2.ofsModuleName = db2.find_module_name(db1.get_module_name(evt1.ofsModuleName))
 				assert(evt2.ofsModuleName <> None)
 				insert_after = db2.add_event(evt2, contact2, insert_after=insert_after)
 				
@@ -227,6 +253,8 @@ def main():
 
 	db1 = mirandadb.MirandaDbxMmap(args.dbname1)
 	db2 = mirandadb.MirandaDbxMmap(args.dbname2, writeable=args.write)
+
+	print_modules_diff(db1, db2)
 
 	if args.contact:
 		contacts1 = db1.contacts_by_mask(args.contact)

@@ -820,19 +820,21 @@ class MirandaDbxMmap(object):
 	_modules = None
 	def get_modules(self):
 		if self._modules == None:
-			moduleOffset = self.header.ofsModuleNames
 			self._modules = []
+			moduleOffset = self.header.ofsModuleNames
 			while moduleOffset <> 0:
 				module = self.read(DBModuleName(), moduleOffset)
 				self._modules.append(module)
 				moduleOffset = module.ofsNext
 		return self._modules
-	_moduleNames = None
+	def get_module(self, offset):
+		for module in self.get_modules():
+			if module.offset == offset:
+				return module
+		return None
 	def get_module_name(self, ofsModule):
-		if not ofsModule in self._moduleNames:
-			module = self.read(DBModuleName(), ofsModule)
-			self._moduleNames[ofsModule] = module.name
-		return self._moduleNames[ofsModule]
+		module = self.get_module(ofsModule)
+		return module.name if module else None
 	def find_module_name(self, name):
 		for module in self.get_modules():
 			if module.name.lower() == name.lower():
