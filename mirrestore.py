@@ -122,6 +122,7 @@ def restore_events_contact(db1, db2, contact1, contact2):
 
 		# Import events missing from DB2
 		for evt1 in diff.db1:
+			print "Importing event "+str(evt1.offset)+" as missing"
 			last_db2_event = mirdiff.import_event(db1, db2, contact2, evt1, last_db2_event)
 		
 		# Delete all DB2-only events which match something in DB1 at least by module, type, contact and flags
