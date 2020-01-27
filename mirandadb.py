@@ -982,6 +982,7 @@ class MirandaDbxMmap(object):
 			self.write(insert_after, insert_after.offset)
 		contact.eventCount += 1
 		self.write(contact, contact.offset)
+		self.event_cache_invalidate(contact.contactID)
 		return event.offset
 	
 	# Deletes event from the given contact, linking events around it together
@@ -1003,6 +1004,7 @@ class MirandaDbxMmap(object):
 		contact.eventCount -= 1
 		self.write(contact, contact.offset)
 		self.free_space(event.offset)
+		self.event_cache_invalidate(contact.contactID)
 	
 	# Returns the last event in the event chain starting with a given event,
 	# or the chain for a given contact
@@ -1025,6 +1027,8 @@ class MirandaDbxMmap(object):
 	# For now we keep an index of "all events HOSTED by a particular contact"
 	# "Events BELONGING to a particular contact" is harder and not required atm
 	_eventChains = None	# contactId -> pair(offset, contactId)
+	def event_cache_invalidate(self, contactId):
+		del self._eventChains[contactId]
 	
 	class EventIter:
 		#  ofsFirst: start with a specific event (normally the contact's first event)
