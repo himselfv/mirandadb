@@ -77,11 +77,21 @@ def compare_events(db1, db2, e1, e2):
 	if e1.contactID <> e2.contactID:
 		fail += "i"
 	if db1.get_module_name(e1.ofsModuleName) <> db2.get_module_name(e2.ofsModuleName):
+		print db1.get_module_name(e1.ofsModuleName)
+		print e1.ofsModuleName
+		print db2.get_module_name(e2.ofsModuleName)
+		print e2.ofsModuleName
 		fail += "m"
 	if e1.eventType <> e2.eventType:
 		fail += "t"
 	if e1.flags <> e2.flags:
-		fail += "f"
+		# Some flags are less permanent than others, e.g. DBEF_READ.
+		# Permanent flags are: DBEF_SENT (==outgoing) and DBEF_RTL
+		# DBEF_UTF CAN change with database upgrades/imports.
+		if (e1.flags & (e1.DBEF_SENT+e1.DBEF_RTL)) == (e2.flags & (e2.DBEF_SENT+e2.DBEF_RTL)):
+			fail += "f"
+		else:
+			fail += "F"
 	if hasattr(e1, 'data') and hasattr(e2, 'data') and (getattr(e1.data, 'text', -1) == getattr(e2.data, 'text', -2)):
 		# Some events may have changed from ASCII to Unicode, that's okay as long as text is the same
 		pass
@@ -129,11 +139,7 @@ def compare_find_event(db1, db2, e1, el2):
 		fail = compare_events(db1, db2, e1, e2)
 		if fail == "":
 			return e2
-		# It's okay for flags to be different though we would prefer them to match
-		# The message could've been read, for example
-		# Some flags shouldn't change! These include DBEF_SENT (otherwise "received") and DBEF_RTL.
-		# DBEF_UTF CAN change with database upgrades/imports.
-		if (fail == "f") and ((e1.flags & (e1.DBEF_SENT+e1.DBEF_RTL)) == (e2.flags & (e2.DBEF_SENT+e2.DBEF_RTL))):
+		if fail == "f":
 			f_candidates.append(e2)
 	if len(f_candidates) > 0:
 		return f_candidates[0]
@@ -197,6 +203,48 @@ class EventDiffIterator:
 def compare_contact_events(db1, db2, contact1, contact2):
 	return EventDiffIterator(db1, db2, db1.get_events(contact1), db2.get_events(contact2))
 
+
+# We want to insert new events after the LAST EVENT FOR THEIR TIMESTAMP
+# The event chain might contain events for other contacts which we haven't even considered:
+#    c1@10 -> c1@10 -> c2@10 -> [want to insert here] -> c1@11
+# We have to start with any event with the timestamp <= required, and scan forward
+def find_event_insert_point(db, contact, timestamp, start_event):
+	if start_event == None:
+		if contact.ofsFirstEvent == 0:
+			return None
+		start_event = db.read_event(contact.ofsFirstEvent)
+	while start_event.ofsNext > 0:
+		next_event = db.read_event(start_event.ofsNext)
+		if next_event.timestamp >= timestamp:
+			break
+		start_event = next_event
+	return start_event
+
+# Imports event evt1 from foreign DB1 to DB2. Returns its offset.
+def import_event(db1, db2, contact2, evt1, insert_after):
+	# Find insert point
+	insert_after = find_event_insert_point(db2, contact2, evt1.timestamp+1, insert_after)
+	# Convert DB1 event to DB2 event
+	evt2 = copy.copy(evt1)
+	# We would have to map event.contactID -> new_event.contactID,
+	# but thankfully we *match* contacts by IDs so they are by definition equal
+	evt2.contactID = evt1.contactID
+	# Module's offset might've changed - this happens in the wild
+	# Note: Preserve the original event module name, even if the contact protocol have changed
+	evt2.ofsModuleName = db2.find_module_name(db1.get_module_name(evt1.ofsModuleName))
+	assert(evt2.ofsModuleName <> None)
+	return db2.add_event(evt2, contact2, insert_after=insert_after)
+	
+
+def print_event_diff(db1, db2, diff):
+	# Print out ALL events for this timestamp to help figuring out the problem
+	for evt in diff.both:
+		print "==DB: "+mirandadb.format_event(db2, evt, evt.data)
+	for evt in (diff.db1 or []):
+		print "--DB2: "+mirandadb.format_event(db1, evt, evt.data)
+	for evt in diff.db2:
+		print "++DB2: "+mirandadb.format_event(db2, evt, evt.data)
+
 # Compares two contacts event by event
 def compare_contact_events_print(db1, db2, contact1, contact2, merge=False):
 	print ("Comparing "+contact1.display_name+" (#"+str(contact1.contactID)+")"
@@ -209,44 +257,24 @@ def compare_contact_events_print(db1, db2, contact1, contact2, merge=False):
 			continue
 		if (diff.db1 == None) and not args.process_new:
 			continue
-		# Print out ALL events for this timestamp to help figuring out the problem
-		for evt in diff.both:
-			print "==DB: "+mirandadb.format_event(db2, evt, evt.data)
-		for evt in (diff.db1 or []):
-			evt.data.size = evt.cbBlob
-			print "--DB2: "+mirandadb.format_event(db1, evt, evt.data)
-		if diff.db2 == None: diff.db2 = []	# We don't care about particulars with DB2
-		for evt in diff.db2:
-			evt.data.size = evt.cbBlob
-			print "++DB2: "+mirandadb.format_event(db2, evt, evt.data)
-		if merge and (diff.db1 <> None) and (len(diff.db1) > 0):
-			existing_db2 = diff.both + diff.db2
-			if len(existing_db2) > 0:
-				insert_after = existing_db2[-1]		# Insert after the last in this set
-			else:
-				insert_after = last_db2_event
+		if diff.db2 == None: diff.db2 = []	# we don't care about particulars with DB2
+		print_event_diff(db1, db2, diff)
+		if merge and (diff.db1 <> None):
 			for evt1 in diff.db1:
-				# Convert DB1 event to DB2 event
-				evt2 = copy.copy(evt1)
-				# We would have to map event.contactID -> new_event.contactID,
-				# but thankfully we *match* contacts by IDs so they are by definition equal
-				evt2.contactID = evt1.contactID
-				# Module's offset might've changed - this happens in the wild
-				# Note: Preserve the original event module name, even if the contact protocol have changed
-				evt2.ofsModuleName = db2.find_module_name(db1.get_module_name(evt1.ofsModuleName))
-				assert(evt2.ofsModuleName <> None)
-				insert_after = db2.add_event(evt2, contact2, insert_after=insert_after)
-				
+				last_db2_event = import_event(db1, db2, contact2, evt1, last_db2_event)
 		print ""	# Empty line
 
 
+"""
+main
+"""
 def main():
 	parser = argparse.ArgumentParser(description="Compares two snapshots of **the same** Miranda database, looking for changed, added or deleted events.",
 		parents=[coreutils.argparser()])
 	parser.add_argument("dbname1", help='path to older database file')
 	parser.add_argument("dbname2", help='path to newer database file')
 	parser.add_argument("--write", help='opens the databases for writing (WARNING: enables editing functions!)', action='store_true')
-	parser.add_argument("--contact", type=str, help='diff only this contact')
+	parser.add_argument("--contact", type=str, nargs='*', help='diff only this contact')
 	parser.add_argument("--modules", action='store_true', help='diff/merge modules')
 	parser.add_argument("--contacts", action='store_true', help='diff/merge contacts')
 	parser.add_argument("--events", action='store_true', help='diff/merge events')

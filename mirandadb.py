@@ -844,7 +844,7 @@ class MirandaDbxMmap(object):
 	# For modules that are accounts, returns their base protocol (string)
 	_baseProtocols = None
 	def get_base_proto(self, moduleName):
-		if isinstance(moduleName, int):	# this is offset
+		if isinstance(moduleName, (int, long)):	# this is offset
 			moduleName = self.get_module_name(moduleName)
 			if moduleName == None: return None
 		if not moduleName in self._baseProtocols:
@@ -932,7 +932,7 @@ class MirandaDbxMmap(object):
 	# Returns the contact which hosts events for this contact - the contact itself or its metacontact.
 	#   contact: ID or DBContact
 	def get_host_contact(self, contact):
-		if isinstance(contact, int):
+		if isinstance(contact, (int, long)):
 			contact = self.contact_by_id(contact)
 		return self.get_meta_contact(contact) or contact
 	
@@ -1016,6 +1016,8 @@ class MirandaDbxMmap(object):
 	
 	# Deletes event from the given contact, linking events around it together
 	def delete_event(self, event, contact=None):
+		if isinstance(event, (int, long)):
+			event = self.read_event(event)
 		# The event can IN FACT be hosted elsewhere, for whatever reason. But there's no quick way to find true host.
 		if contact == None:
 			contact = self.get_host_contact(event.contactID)
@@ -1040,7 +1042,7 @@ class MirandaDbxMmap(object):
 			child_contact = self.get_contact(event.contactID)
 			child_contact.eventCount -= 1
 			self.write(child_contact, child_contact.offset)
-		self.free_space(event.offset)
+		self.free_space(event.offset, event.size())
 		self.event_cache_invalidate(contact.contactID)
 	
 	# MetaContacts steal events from their children but leave contactId and moduleName intact:
@@ -1140,7 +1142,7 @@ class MirandaDbxMmap(object):
 		return event
 	
 	# Returns last event with timestamp < given. For <=, ask for timestamp+1
-	def last_event_before_timestamp(self, contact, timestamp):
+	def last_event_before_timestamp(self, contact, timestamp, first=None):
 		result = None
 		for prev_event in self.get_events(contact):
 			if prev_event.timestamp>=timestamp: break
