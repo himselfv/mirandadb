@@ -1052,7 +1052,8 @@ class MirandaDbxMmap(object):
 	# "Events BELONGING to a particular contact" is harder and not required atm
 	_eventChains = None	# contactId -> pair(offset, contactId)
 	def event_cache_invalidate(self, contactId):
-		del self._eventChains[contactId]
+		if contactId in self._eventChains:
+			del self._eventChains[contactId]
 	
 	class EventIter:
 		#  ofsFirst: start with a specific event (normally the contact's first event)
