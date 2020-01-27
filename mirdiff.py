@@ -34,7 +34,7 @@ def print_modules_diff(db1, db2, diff):
 	for offset in missing:
 		moduleNane = db1.get_module_name(offset)
 		print "--DB2: "+moduleName
-		if args.merge:
+		if args.merge_modules:
 			new_offset = db2.add_module_name(moduleName)
 	for offset in new:
 		print "++DB2: "+db2.get_module_name(offset)
@@ -251,7 +251,8 @@ def main():
 	parser.add_argument("--contacts", action='store_true', help='diff/merge contacts')
 	parser.add_argument("--events", action='store_true', help='diff/merge events')
 	
-	parser.add_argument("--process-new", help='processes NEW events in addition to changed or missing events', action='store_true')
+	parser.add_argument("--process-new", help='process NEW events in addition to changed or missing events', action='store_true')
+	parser.add_argument("--merge-modules", action='store_true', help='imports all missing modules from DB1 into DB2')
 	parser.add_argument("--merge-messages", action='store_true', help='imports all missing messages from DB1 into DB2')
 	global args
 	args = parser.parse_args()
@@ -273,14 +274,14 @@ def main():
 	if args.contacts:
 		print "Contacts:"
 		for contact1 in contacts_map['missing1']:
-			print "--DB2: "+contact1.display_name
+			print "--DB2: "+contact1.display_name+' (#'+str(contact1.contactID)+')'
 		for contact2 in contacts_map['missing2']:
-			print "++DB2: "+contact2.display_name
+			print "++DB2: "+contact2.display_name+' (#'+str(contact2.contactID)+')'
 
 	if args.events:
 		if not args.contact: # explicitly compare one db.user against another
 			compare_contact_events_print(db1, db2, db1.user, db2.user, merge=args.merge_messages)
-		for (contact1, contact2) in ret['match']:
+		for (contact1, contact2) in contacts_map['match']:
 			compare_contact_events_print(db1, db2, contact1, contact2, merge=args.merge_messages)
 
 if __name__ == "__main__":
