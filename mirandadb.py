@@ -981,11 +981,11 @@ class MirandaDbxMmap(object):
 			contact = self.get_host_contact(event.contactID)
 		# Select insert_after
 		if insert_after == None:
-			insert_after = self.last_event_before_timestamp(event.timestamp+1)
+			insert_after = self.last_event_before_timestamp(contact, event.timestamp+1)
 		elif insert_after == 0:
 			insert_after = None
 		elif insert_after < 0:
-			insert_after = db.get_last_event(contact)
+			insert_after = self.db.get_last_event(contact)
 		# Link events together
 		if insert_after == None:
 			if contact.ofsFirstEvent <> 0:
@@ -1139,7 +1139,7 @@ class MirandaDbxMmap(object):
 	# Returns last event with timestamp < given. For <=, ask for timestamp+1
 	def last_event_before_timestamp(self, contact, timestamp):
 		result = None
-		for prev_event in db.get_events(contact):
+		for prev_event in self.get_events(contact):
 			if prev_event.timestamp>=timestamp: break
 			result = prev_event
 		return result
@@ -1522,7 +1522,7 @@ def add_event(db, args):
 	event.flags = event.DBEF_UTF
 	event.eventType = 0
 	event.blob = args.text.encode('utf-8')
-	db.add_event(contact, event, insert_after=args.after)
+	db.add_event(event, contact, insert_after=args.after)
 
 def delete_event(db, args):
 	for offset in args.offset:

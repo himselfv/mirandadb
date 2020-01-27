@@ -173,7 +173,7 @@ def compare_contact_events(db1, db2, contact1, contact2):
 def compare_contact_events_print(db1, db2, contact1, contact2, merge=False):
 	print ("Comparing "+contact1.display_name+" (#"+str(contact1.contactID)+")"
 		+" and "+contact2.display_name+" (#"+str(contact2.contactID)+")...")
-	last_db2_event = None	# Keep track of this to quickly insert new ones
+	last_db2_event = None	# Keep track to quickly insert new ones
 	for diff in EventDiffIterator(db1, db2, db1.get_events(contact1), db2.get_events(contact2)):
 		if diff.both: last_db2_event = diff.both[-1]
 		elif diff.db2: last_db2_event = diff.db2[-1]
@@ -187,20 +187,28 @@ def compare_contact_events_print(db1, db2, contact1, contact2, merge=False):
 		for evt in (diff.db1 or []):
 			evt.data.size = evt.cbBlob
 			print "--DB2: "+mirandadb.format_event(db1, evt, evt.data)
+		if diff.db2 == None: diff.db2 = []	# We don't care about particulars with DB2
 		for evt in diff.db2:
 			evt.data.size = evt.cbBlob
 			print "++DB2: "+mirandadb.format_event(db2, evt, evt.data)
 		if merge and (diff.db1 <> None) and (len(diff.db1) > 0):
-			existing_db2 = diff.both + args.db2
+			existing_db2 = diff.both + diff.db2
 			if len(existing_db2) > 0:
-				insert_after = existing_db2[-1]		# Insert after the last existing; saves us looking by timestamp
+				insert_after = existing_db2[-1]		# Insert after the last in this set
 			else:
 				insert_after = last_db2_event
 			for evt1 in diff.db1:
-				# We would have to map event.contactID -> new_event.contactID, but thankfully,
-				# contactIDs are the same (they *are* how we map contacts!)
+				# Convert DB1 event to DB2 event
 				evt2 = copy.copy(evt1)
-				db2.add_event(contact2, evt2)
+					# We would have to map event.contactID -> new_event.contactID,
+					# but thankfully we *match* contacts by IDs so they are by definition equal
+				evt2.contactID = evt1.contactID
+					# ModuleOffset might've changed - this happens in the wild
+					# ModuleName might've been changed between versions too
+				evt2.ofsModuleName = db2.find_module_name(contact2.protocol) or db2.find_module_name(db1.get_module_name(evt1.ofsModuleName))
+				assert(evt2.ofsModuleName <> None)
+				insert_after = db2.add_event(evt2, contact2, insert_after=insert_after)
+				
 		print ""	# Empty line
 
 
