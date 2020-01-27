@@ -754,6 +754,9 @@ class DBVKontakteUserDeactivateActionBlob:
 class MirandaDbxMmap(object):
 	file = None
 	def __init__(self, filename, writeable=False):
+		self._baseProtocols = {}
+		self._moduleNames = {}
+		self._eventChains = {}
 		open_mode = "rb+" if writeable else "rb"
 		self.file = open(filename, open_mode)
 		self.filename = filename
@@ -824,7 +827,7 @@ class MirandaDbxMmap(object):
 				self._modules.append(module)
 				moduleOffset = module.ofsNext
 		return self._modules
-	_moduleNames = {}
+	_moduleNames = None
 	def get_module_name(self, ofsModule):
 		if not ofsModule in self._moduleNames:
 			module = self.read(DBModuleName(), ofsModule)
@@ -837,7 +840,7 @@ class MirandaDbxMmap(object):
 		return None
 
 	# For modules that are accounts, returns their base protocol (string)
-	_baseProtocols = {}
+	_baseProtocols = None
 	def get_base_proto(self, moduleName):
 		if isinstance(moduleName, int):	# this is offset
 			moduleName = self.get_module_name(moduleName)
@@ -1012,6 +1015,70 @@ class MirandaDbxMmap(object):
 			event = self.read_event(event.ofsNext)
 		return event
 
+	# MetaContacts steal events from their children but leave contactId and moduleName intact:
+	#    Contact1: 4 events, first: None
+	#    Contact2: 2 events, first: None
+	#    Meta: 8 events, c1 -> c2 -> c1 -> c1 -> c2 -> c1
+	# When the contact lacks events we scan through its meta.
+	# But EVERY subcontact has to iterate ALL metacontact events. So on first read we build an index.
+	
+	# For now we keep an index of "all events HOSTED by a particular contact"
+	# "Events BELONGING to a particular contact" is harder and not required atm
+	_eventChains = None	# contactId -> pair(offset, contactId)
+	
+	class EventIter:
+		#  ofsFirst: start with a specific event (normally the contact's first event)
+		#  chain: first events are cached. After the cached part ends, enum continues from the last offset,
+		# expanding the cached chain.
+		#  contactId: skip events unless they belong to the given contact
+		def __init__(self, db, ofsFirst=None, chain=None, contactId=None):
+			self.db = db
+			self.chain = chain
+			self.chain_idx = 0
+			self.offset = ofsFirst
+			self.contactId = contactId
+		def __iter__(self):
+			return self
+		def next(self):
+			# Go through the cached part of the chain first
+			while self.chain_idx < len(self.chain):
+				pair = self.chain[self.chain_idx]
+				if pair[0]==0:	# zero-offset means the chain is over
+					raise StopIteration()	# before chain_idx+=1, so that we return here every next()
+				self.chain_idx += 1
+				if (self.contactId==None) or (pair[1]==self.contactId):
+					event = self.db.read_event(pair[0])
+					event.data = self.db.decode_event_data(event)
+					return event
+			# No zero-offset means we should continue from the last event
+			if self.chain and (len(self.chain)>0):
+				last_event = self.db.read_event(self.chain[-1][0])
+				self.offset = last_event.ofsNext
+				# Otherwise we should've been given contact's ofsFirst
+			# Read events one by one
+			event = None
+			while self.offset <> 0:
+				event = self.db.read_event(self.offset)
+				if event==None: break		# Should not happen but verify
+				if self.chain <> None:
+					self.chain.append((self.offset, event.contactID))
+				self.offset = event.ofsNext
+				if (self.contactId == None) or (event.contactID == self.contactId):
+					event.data = self.db.decode_event_data(event)
+					return event
+			# No more events
+			if self.chain and (self.chain[-1][0]<>0):
+				self.chain.append((0,0))	# Chain terminator
+			raise StopIteration()
+
+	def get_event_iter(self, contact, contactId):
+		# Event chains for each hoster contact are cached
+		chain = self._eventChains.get(contact.contactID, None)
+		if chain == None:
+			chain = []
+			self._eventChains[contact.contactID] = chain
+		return self.EventIter(self, contact.ofsFirstEvent, chain, contactId)
+
 	# Retrieves and decodes all events for the contact. Handles MetaContacts transparently.
 	#	contact_id: Return only events for this contactId (MetaContacts can host multiple)
 	#	with_metacontacts: Locate this contact events in MetaContacts too.
@@ -1024,29 +1091,12 @@ class MirandaDbxMmap(object):
 			metaContact = self.contact_by_id(metaId) if metaId <> None else None
 			if metaContact <> None:
 				contactId2 = contactId if contactId <> None else contact.contactID
-				return self.EventIter(self, metaContact.ofsFirstEvent, contactId=contactId2)
+				return self.get_event_iter(metaContact, contactId2)
 		# If this is a MetaContact itself, skip events not directly owned by it
 		if with_metacontacts and (contact.protocol == "MetaContacts") and (contactId == None):
 			contactId = contact.contactID
-		return self.EventIter(self, contact.ofsFirstEvent, contactId)
-	class EventIter:
-		def __init__(self, db, ofsFirstEvent, contactId=None):
-			self.db = db
-			self.offset = ofsFirstEvent
-			self.contactId = contactId
-		def __iter__(self):
-			return self
-		def next(self):
-			event = None
-			while True and self.offset <> 0:
-				event = self.db.read_event(self.offset)
-				self.offset = event.ofsNext if event <> None else 0
-				if (event == None) or (self.contactId == None) or (event.contactID == self.contactId):
-					break
-				event = None # to avoid being matched as success on iteration end
-			if (event==None) and (self.offset == 0): raise StopIteration()
-			event.data = self.db.decode_event_data(event)
-			return event
+		return self.get_event_iter(contact, contactId)
+
 	
 	# Returns a class that can be vars()ed
 	def decode_event_data(self, event):
