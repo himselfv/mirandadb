@@ -922,6 +922,18 @@ class MirandaDbxMmap(object):
 				return contact
 		return None
 	
+	# Returns the meta contact for the given contact, or None
+	def get_meta_contact(self, contact):
+		metaId = contact.get_setting("MetaContacts", "ParentMeta")
+		metaContact = self.contact_by_id(metaId) if metaId <> None else None
+	
+	# Returns the contact which hosts events for this contact - the contact itself or its metacontact.
+	#   contact: ID or DBContact
+	def get_host_contact(self, contact):
+		if isinstance(contact, int):
+			contact = self.contact_by_id(contact)
+		return self.get_meta_contact(contact) or contact
+	
 	# Returns all contacts with nickname matching the given one, or db.user if contact_name is empty
 	def contacts_by_mask(self, contact_mask):
 		if len(contact_mask) <= 0:
@@ -957,10 +969,24 @@ class MirandaDbxMmap(object):
 	def read_event(self, offset):
 		return self.read(DBEvent(), offset)
 	
-	# Adds a new event to the given contact, inserting it after the given event.
-	# Returns new event offset.
-	def add_event(self, contact, event, insert_after = None):
+	# Adds a new event to the database. Returns new event offset.
+	#	contact: The host contact. Otherwise determined automatically, minding metacontacts.
+	#	insert_after: Offset of the event to insert this one after.
+	#	  None:	Determine automatically from timestamp
+	#	  0:	First event in the chain
+	#	  -1:	Last event in the chain
+	def add_event(self, event, contact=None, insert_after=None):
 		event.offset = self.reserve_space(event.size())
+		if contact == None:
+			contact = self.get_host_contact(event.contactID)
+		# Select insert_after
+		if insert_after == None:
+			insert_after = self.last_event_before_timestamp(event.timestamp+1)
+		elif insert_after == 0:
+			insert_after = None
+		elif insert_after < 0:
+			insert_after = db.get_last_event(contact)
+		# Link events together
 		if insert_after == None:
 			if contact.ofsFirstEvent <> 0:
 				evtNext = self.read_event(contact.ofsFirstEvent)
@@ -973,6 +999,7 @@ class MirandaDbxMmap(object):
 			evtNext = None
 		event.ofsPrev = insert_after.offset if insert_after <> None else 0
 		event.ofsNext = evtNext.offset if evtNext <> None else 0
+		# Write
 		self.write(event, event.offset)
 		if evtNext <> None:
 			evtNext.ofsPrev = event.offset
@@ -986,7 +1013,10 @@ class MirandaDbxMmap(object):
 		return event.offset
 	
 	# Deletes event from the given contact, linking events around it together
-	def delete_event(self, contact, event):
+	def delete_event(self, event, contact=None):
+		# The event can IN FACT be hosted elsewhere, for whatever reason. But there's no quick way to find true host.
+		if contact == None:
+			contact = self.get_host_contact(event.contactID)
 		ofsPrev = event.ofsPrev
 		ofsNext = event.ofsNext
 		# Link events around this one together
@@ -1003,20 +1033,14 @@ class MirandaDbxMmap(object):
 			self.write(evtNext, evtNext.offset)	# The size shouldn't have changed
 		contact.eventCount -= 1
 		self.write(contact, contact.offset)
+		# When updating metacontacts, we must update both the host and the child
+		if contact.contactID <> event.contactID:
+			child_contact = self.get_contact(event.contactID)
+			child_contact.eventCount -= 1
+			self.write(child_contact, child_contact.offset)
 		self.free_space(event.offset)
 		self.event_cache_invalidate(contact.contactID)
 	
-	# Returns the last event in the event chain starting with a given event,
-	# or the chain for a given contact
-	def get_last_event(self, event):
-		if isinstance(event, DBContact):
-			event = self.read_event(event.ofsFirstEvent) if event.ofsFirstEvent <> 0 else None
-		if event == None:
-			return None
-		while event.ofsNext <> 0:
-			event = self.read_event(event.ofsNext)
-		return event
-
 	# MetaContacts steal events from their children but leave contactId and moduleName intact:
 	#    Contact1: 4 events, first: None
 	#    Contact2: 2 events, first: None
@@ -1091,8 +1115,7 @@ class MirandaDbxMmap(object):
 	def get_events(self, contact, with_metacontacts=True, contactId=None):
 		# MetaContacts can steal events from their children but leave contactId and moduleName intact
 		if (contact.ofsFirstEvent == 0) and (contact.eventCount > 0) and with_metacontacts:
-			metaId = contact.get_setting("MetaContacts", "ParentMeta")
-			metaContact = self.contact_by_id(metaId) if metaId <> None else None
+			metaContact = self.get_meta_contact(contact)
 			if metaContact <> None:
 				contactId2 = contactId if contactId <> None else contact.contactID
 				return self.get_event_iter(metaContact, contactId2)
@@ -1100,7 +1123,25 @@ class MirandaDbxMmap(object):
 		if with_metacontacts and (contact.protocol == "MetaContacts") and (contactId == None):
 			contactId = contact.contactID
 		return self.get_event_iter(contact, contactId)
-
+	
+	# Returns the last event in the event chain starting with a given event,
+	# or the chain for a given contact
+	def get_last_event(self, event):
+		if isinstance(event, DBContact):
+			event = self.read_event(event.ofsFirstEvent) if event.ofsFirstEvent <> 0 else None
+		if event == None:
+			return None
+		while event.ofsNext <> 0:
+			event = self.read_event(event.ofsNext)
+		return event
+	
+	# Returns last event with timestamp < given. For <=, ask for timestamp+1
+	def last_event_before_timestamp(self, contact, timestamp):
+		result = None
+		for prev_event in db.get_events(contact):
+			if prev_event.timestamp>=timestamp: break
+			result = prev_event
+		return result
 	
 	# Returns a class that can be vars()ed
 	def decode_event_data(self, event):
@@ -1475,23 +1516,12 @@ def add_event(db, args):
 		event.timestamp = args.timestamp
 	else:
 		event.timestamp = calendar.timegm(datetime.now().timetuple())
-	print str(args.after)
-	if args.after == None:
-		insert_after = None
-		for prev_event in db.get_events(contact):
-			if prev_event.timestamp>event.timestamp: break
-			insert_after = prev_event
-	elif args.after == 0:
-		insert_after = None
-	elif args.after < 0:
-		insert_after = db.get_last_event(contact)
-	else:
-		insert_after = db.read_event(args.after)	# verifies that it's an event
+	if (args.after <> None) and (args.after > 0):
+		insert_after = db.read_event(args.after)	# verify that it's an event
 	event.flags = event.DBEF_UTF
 	event.eventType = 0
 	event.blob = args.text.encode('utf-8')
-	
-	db.add_event(contact, event, insert_after=insert_after)
+	db.add_event(contact, event, insert_after=args.after)
 
 def delete_event(db, args):
 	for offset in args.offset:

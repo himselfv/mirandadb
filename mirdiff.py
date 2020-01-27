@@ -7,6 +7,7 @@ import mirandadb
 import utfutils
 import fnmatch
 import __builtin__
+import copy
 
 log = logging.getLogger('mirdiff')
 
@@ -142,7 +143,7 @@ class EventDiffIterator:
 			
 			if (self.e2 == None) or (self.e2.timestamp > self.e1.timestamp):
 				diff = EventDiff(both=[], db1=[self.e1], db2=[])
-				self.e1 = __builtin__.next(events1, None)
+				self.e1 = __builtin__.next(self.events1, None)
 				return diff
 			
 			# Collect all events for this second
@@ -170,13 +171,16 @@ def compare_contact_events(db1, db2, contact1, contact2):
 	return EventDiffIterator(db1, db2, db1.get_events(contact1), db2.get_events(contact2))
 
 # Compares two contacts event by event
-def compare_contact_events_print(db1, db2, contact1, contact2):
+def compare_contact_events_print(db1, db2, contact1, contact2, merge=False):
 	print ("Comparing "+contact1.display_name+" (#"+str(contact1.contactID)+")"
 		+" and "+contact2.display_name+" (#"+str(contact2.contactID)+")...")
+	last_db2_event = None	# Keep track of this to quickly insert new ones
 	for diff in EventDiffIterator(db1, db2, db1.get_events(contact1), db2.get_events(contact2)):
+		if diff.both: last_db2_event = diff.both[-1]
+		elif diff.db2: last_db2_event = diff.db2[-1]
 		if (not diff.db1) and (not diff.db2):
 			continue
-		if (diff.db1 == None) and not args.print_new:
+		if (diff.db1 == None) and not args.process_new:
 			continue
 		# Print out ALL events for this timestamp to help figuring out the problem
 		for evt in diff.both:
@@ -187,6 +191,21 @@ def compare_contact_events_print(db1, db2, contact1, contact2):
 		for evt in diff.db2:
 			evt.data.size = evt.cbBlob
 			print "++DB2: "+mirandadb.format_event(db2, evt, evt.data)
+		if merge and (diff.db1 <> None) and (len(diff.db1) > 0):
+			existing_db2 = diff.both + args.db2
+			if len(existing_db2) > 0:
+				insert_after = existing_db2[-1]		# Insert after the last existing; saves us looking by timestamp
+			else:
+				insert_after = last_db2_event
+			for evt1 in diff.db1:
+				evt2 = copy.copy(evt1)
+				evt2.contactID = map_contact_id(contact1.contactID)
+				# TODO: Problems:
+				#   - We have to map EVENT contactId, therefore have to have a contactID map
+				#   - We'll insert the message into the OWNER chain, while in this database they might be in the HOSTER chain (meta)
+				#     -- Might've fixed by making add_event write to the hoster chain by default
+				db2.add_event(contact2, )
+			
 		print ""	# Empty line
 
 
@@ -195,15 +214,16 @@ def main():
 		parents=[coreutils.argparser()])
 	parser.add_argument("dbname1", help='path to older database file')
 	parser.add_argument("dbname2", help='path to newer database file')
-	parser.add_argument("--print-new", help='finds NEW events in addition to changed or missing events', action='store_true')
+	parser.add_argument("--write", help='opens the databases for writing (WARNING: enables editing functions!)', action='store_true')
 	parser.add_argument("--contact", type=str, help='diff only this contact')
-	parser.add_argument("--merge", action='store_true', help='imports all missing messages from DB1 into DB2')
+	parser.add_argument("--process-new", help='processes NEW events in addition to changed or missing events', action='store_true')
+	parser.add_argument("--merge-messages", action='store_true', help='imports all missing messages from DB1 into DB2')
 	global args
 	args = parser.parse_args()
 	coreutils.init(args)
 
 	db1 = mirandadb.MirandaDbxMmap(args.dbname1)
-	db2 = mirandadb.MirandaDbxMmap(args.dbname2)
+	db2 = mirandadb.MirandaDbxMmap(args.dbname2, writeable=args.write)
 
 	if args.contact:
 		contacts1 = db1.contacts_by_mask(args.contact)
@@ -221,9 +241,9 @@ def main():
 		print contact2.display_name
 
 	if not args.contact: # explicitly compare one db.user against another
-		compare_contact_events_print(db1, db2, db1.user, db2.user)
+		compare_contact_events_print(db1, db2, db1.user, db2.user, merge=args.merge_messages)
 	for (contact1, contact2) in ret['match']:
-		compare_contact_events_print(db1, db2, contact1, contact2)
+		compare_contact_events_print(db1, db2, contact1, contact2, merge=args.merge_messages)
 
 if __name__ == "__main__":
 	sys.exit(main())
