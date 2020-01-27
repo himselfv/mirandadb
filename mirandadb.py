@@ -925,7 +925,7 @@ class MirandaDbxMmap(object):
 	# Returns the meta contact for the given contact, or None
 	def get_meta_contact(self, contact):
 		metaId = contact.get_setting("MetaContacts", "ParentMeta")
-		metaContact = self.contact_by_id(metaId) if metaId <> None else None
+		return self.contact_by_id(metaId) if metaId <> None else None
 	
 	# Returns the contact which hosts events for this contact - the contact itself or its metacontact.
 	#   contact: ID or DBContact
@@ -1090,6 +1090,7 @@ class MirandaDbxMmap(object):
 				if event==None: break		# Should not happen but verify
 				if self.chain <> None:
 					self.chain.append((self.offset, event.contactID))
+					self.chain_idx += 1		# Or we'll return it from the chain next call :)
 				self.offset = event.ofsNext
 				if (self.contactId == None) or (event.contactID == self.contactId):
 					event.data = self.db.decode_event_data(event)

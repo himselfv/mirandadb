@@ -135,31 +135,30 @@ class EventDiffIterator:
 			if (self.e1 == None) and (self.e2 == None):
 				raise StopIteration()
 			
-			if (self.e1 == None) or ((self.e2 <> None) and (self.e1.timestamp > self.e2.timestamp)):
+			# No more db1 events
+			if self.e1 == None:
 				diff = EventDiff(both=[], db1=None, db2=[self.e2])
 				self.e2 = __builtin__.next(self.events2, None)
 				return diff
-				#TODO: setting db1=none here might be wrong for cases where e1 is simply ahead, not over
 			
-			if (self.e2 == None) or (self.e2.timestamp > self.e1.timestamp):
-				diff = EventDiff(both=[], db1=[self.e1], db2=[])
+			# No more db2 events
+			if self.e2 == None:
+				diff = EventDiff(both=[], db1=[self.e1], db2=None)
 				self.e1 = __builtin__.next(self.events1, None)
 				return diff
 			
-			# Collect all events for this second
-			timestamp = self.e1.timestamp
-			el1 = [self.e1]
-			el2 = [self.e2]
-			self.e1 = __builtin__.next(self.events1, None)
-			while self.e1 <> None:
-				if self.e1.timestamp <> timestamp:
-					break
+			# Collect all events for the lowest of two timestamps
+			if self.e2.timestamp >= self.e1.timestamp:
+				timestamp = self.e1.timestamp
+			else:
+				timestamp = self.e2.timestamp
+			
+			el1 = []
+			el2 = []
+			while (self.e1 <> None) and (self.e1.timestamp == timestamp):
 				el1.append(self.e1)
 				self.e1 = __builtin__.next(self.events1, None)
-			self.e2 = __builtin__.next(self.events2, None)
-			while self.e2 <> None:
-				if self.e2.timestamp <> timestamp:
-					break
+			while (self.e2 <> None) and (self.e2.timestamp == timestamp):
 				el2.append(self.e2)
 				self.e2 = __builtin__.next(self.events2, None)
 
@@ -198,14 +197,10 @@ def compare_contact_events_print(db1, db2, contact1, contact2, merge=False):
 			else:
 				insert_after = last_db2_event
 			for evt1 in diff.db1:
+				# We would have to map event.contactID -> new_event.contactID, but thankfully,
+				# contactIDs are the same (they *are* how we map contacts!)
 				evt2 = copy.copy(evt1)
-				evt2.contactID = map_contact_id(contact1.contactID)
-				# TODO: Problems:
-				#   - We have to map EVENT contactId, therefore have to have a contactID map
-				#   - We'll insert the message into the OWNER chain, while in this database they might be in the HOSTER chain (meta)
-				#     -- Might've fixed by making add_event write to the hoster chain by default
-				db2.add_event(contact2, )
-			
+				db2.add_event(contact2, evt2)
 		print ""	# Empty line
 
 
