@@ -768,7 +768,6 @@ class MirandaDbxMmap(object):
 	# cl must provide cl.FORMAT and cl.unpack()
 	def read(self, cl, offset = None):
 		if offset <> None:
-			#print "Seeking "+str(offset)
 			self.file.seek(offset, 0)
 		cl.read(self.file)
 		log.debug(vars(cl))
@@ -1030,7 +1029,6 @@ class MirandaDbxMmap(object):
 			# But there's no quick way to find true host unless told.
 		ofsPrev = event.ofsPrev
 		ofsNext = event.ofsNext
-		print str(ofsPrev)+' '+str(ofsNext)
 		# Link events around this one together
 		if ofsPrev == 0:
 			contact.ofsFirstEvent = ofsNext
@@ -1047,7 +1045,7 @@ class MirandaDbxMmap(object):
 		self.write(contact, contact.offset)
 		# When updating metacontacts, we must update both the host and the child
 		if contact.contactID <> event.contactID:
-			child_contact = self.get_contact(event.contactID)
+			child_contact = self.contact_by_id(event.contactID)
 			child_contact.eventCount -= 1
 			self.write(child_contact, child_contact.offset)
 		self.free_space(event.offset, event.size())
