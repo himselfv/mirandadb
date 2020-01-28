@@ -121,9 +121,9 @@ def restore_events_contact(db1, db2, contact1, contact2):
 			mirdiff.print_event_diff(db1, db2, diff)
 
 		# Import events missing from DB2
-		for evt1 in diff.db1:
-			print "Importing event "+str(evt1.offset)+" as missing"
-			last_db2_event = mirdiff.import_event(db1, db2, contact2, evt1, last_db2_event)
+#		for evt1 in diff.db1:
+#			print "Importing event "+str(evt1.offset)+" as missing"
+#			last_db2_event = mirdiff.import_event(db1, db2, contact2, evt1, last_db2_event)
 		
 		# Delete all DB2-only events which match something in DB1 at least by module, type, contact and flags
 		for e2 in diff.db2:
@@ -142,7 +142,7 @@ def restore_events_contact(db1, db2, contact1, contact2):
 				print fail
 			if e1_match <> None:
 				print "Deleting event "+str(e2.offset)+', matches DB1 event '+str(e1_match.offset)
-				db2.delete_event(e2, contact2)
+				db2.delete_event(e2)
 			else:
 				print "Skipping DB2-only event "+str(e2.offset)+', no match in DB1'
 
@@ -162,7 +162,7 @@ sparser.set_defaults(func=dump_events)
 
 sparser = subparsers.add_parser('restore-events', help='restores events which differ from another DB')
 sparser.add_argument('--contact', type=str, nargs='*', help='restore events for these contacts')
-sparser.add_argument('--old-dbname', type=str, help='use this old db version')
+sparser.add_argument('--old-dbname', type=str, required=True, help='use this old db version')
 sparser.add_argument('--print-diff', action='store_true', help='print diff in addition to addition/deletion messages')
 sparser.set_defaults(func=restore_events)
 

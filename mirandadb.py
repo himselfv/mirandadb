@@ -1015,14 +1015,22 @@ class MirandaDbxMmap(object):
 		return event.offset
 	
 	# Deletes event from the given contact, linking events around it together
-	def delete_event(self, event, contact=None):
-		if isinstance(event, (int, long)):
-			event = self.read_event(event)
-		# The event can IN FACT be hosted elsewhere, for whatever reason. But there's no quick way to find true host.
+	def delete_event(self, offset, contact=None):
+		# We must use base offsets only, clients will often have stale ofsPrev/ofsNext pointers,
+		# especially when doing mass deletions.
+		if isinstance(offset, DBEvent):
+			offset = offset.offset
+		# To trust DBEvent() fields we must have some kind of "single-instance events":
+		# cache returned DBEvents and update on the fly, removing only on __del__.
+		# And that might not be wise. What if someone's iterating over them? Safer to just requery on each edit.
+		event = self.read_event(offset)
 		if contact == None:
 			contact = self.get_host_contact(event.contactID)
+			# The event can IN FACT be hosted elsewhere, for whatever reason.
+			# But there's no quick way to find true host unless told.
 		ofsPrev = event.ofsPrev
 		ofsNext = event.ofsNext
+		print str(ofsPrev)+' '+str(ofsNext)
 		# Link events around this one together
 		if ofsPrev == 0:
 			contact.ofsFirstEvent = ofsNext
@@ -1531,10 +1539,7 @@ def add_event(db, args):
 
 def delete_event(db, args):
 	for offset in args.offset:
-		# Verify that this is an event
-		event = db.read_event(offset)	# will raise on bad signature
-		# Delete it
-		db.delete_event(offset)
+		db.delete_event(offset)	# Will verify that it's an event
 
 if __name__ == "__main__":
 	sys.exit(main())
