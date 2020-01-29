@@ -86,9 +86,9 @@ class DbVerifier(mirandadb.MirandaDbxMmap):
 		
 		self.file.seek(0, 2)
 		self.fileSize = self.file.tell()
-		vassert(self.fileSize-self.totalUsed == self.header.slackSpace,
-			'FileSize:'+str(self.fileSize)+' - TotalUsed:'+str(self.totalUsed)+' != SlackSpace:'+str(self.header.slackSpace)+' (diff='
-			+str(self.fileSize-self.totalUsed-self.header.slackSpace)+')'
+		sizeDiff = self.header.ofsFileEnd-self.totalUsed-self.header.slackSpace
+		vassert(sizeDiff == 0,
+			'ofsFileEnd:'+str(self.header.ofsFileEnd)+' - TotalUsed:'+str(self.totalUsed)+' != SlackSpace:'+str(self.header.slackSpace)+' (diff='+str(sizeDiff)+')'
 			)
 	
 	def verify_contacts(self):
