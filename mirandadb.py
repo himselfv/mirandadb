@@ -1372,6 +1372,11 @@ def main():
 	sparser.add_argument("--low", help='print low-level info', action='store_true')
 	sparser.set_defaults(func=dump_events)
 
+	sparser = subparsers.add_parser('dump-event', help='prints the specific events')
+	sparser.add_argument('offset', type=int, nargs='+', help='print events at these offsets')
+	sparser.add_argument("--low", help='print low-level info', action='store_true')
+	sparser.set_defaults(func=dump_event)
+
 	sparser = subparsers.add_parser('add-event', help='adds a simple message event to the end of the chain')
 	sparser.add_argument('--contact', type=int, required=True, metavar='contact id')
 	sparser.add_argument('--text', type=str, required=True, metavar='event text')
@@ -1506,6 +1511,13 @@ def event_stats_contact(db, contact, stats):
 		
 		ofsEvent = event.ofsNext
 
+def dump_event(db, args):
+	for offset in args.offset:
+		event = db.read_event(offset)
+		if args.low:
+			print str(vars(event))
+		else:
+			print format_event(db, event)
 
 def dump_events(db, args):
 	def should_print_event(event):

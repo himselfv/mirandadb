@@ -140,6 +140,11 @@ class DbVerifier(mirandadb.MirandaDbxMmap):
 			meta_count = contact.get_meta_child_count()
 			vassert(len(meta_children) == meta_count, prefix+"Wrong number of meta children ("+str(meta_count)+' given, '+str(len(meta_children))+' listed)')
 			allowed_ids += meta_children
+			for childId in meta_children:
+				child1 = self.contact_by_id(childId)
+				vassert(child1 <> None, prefix+'Cannot find meta child '+str(childId))
+				child1_parent = child1.get_meta_parent()
+				vassert(child1_parent==contact.contactID, prefix+'Child '+str(childId)+' doesn\'t consider us parent (has '+str(child1_parent)+' instead)')
 
 		(eventCount, ofsLastEvent) = self.verify_event_chain(contact.ofsFirstEvent, allowed_ids)
 		
@@ -162,7 +167,7 @@ class DbVerifier(mirandadb.MirandaDbxMmap):
 	
 	def verify_event_chain(self, offset, allowed_ids):
 		eventCount = 0
-		lastOffset = offset
+		lastOffset = 0
 		lastTimestamp = 0
 		while offset <> 0:
 			eventCount += 1
