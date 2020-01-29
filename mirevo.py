@@ -61,6 +61,14 @@ def contact_evo_update(contact_histories, db):
 				module = contact.settings[moduleName]
 				for setting in module:
 					contact_history.add_prop(ver, moduleName+'\\'+setting.name, setting.value)
+			# Mark deleted settings
+			for propName in contact_history.props:
+				value = contact_history.props[propName]
+				if value == None: continue	# Already None anyway
+				(moduleName,settingName) = propName.split('\\', 2)
+				new_value = contact.get_setting(moduleName, settingName)
+				if new_value == None:
+					contact_history.add_prop(ver, propName, None)
 			
 		contact_histories[contact.contactID] = contact_history
 
