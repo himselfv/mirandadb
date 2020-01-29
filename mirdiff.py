@@ -109,10 +109,6 @@ def compare_events(db1, db2, e1, e2):
 	if e1.contactID <> e2.contactID:
 		fail += "i"
 	if db1.get_module_name(e1.ofsModuleName) <> db2.get_module_name(e2.ofsModuleName):
-		print db1.get_module_name(e1.ofsModuleName)
-		print e1.ofsModuleName
-		print db2.get_module_name(e2.ofsModuleName)
-		print e2.ofsModuleName
 		fail += "m"
 	if e1.eventType <> e2.eventType:
 		fail += "t"
@@ -313,10 +309,16 @@ def main():
 	
 	parser.add_argument("--process-new", help='process NEW events in addition to changed or missing events', action='store_true')
 	parser.add_argument("--merge-modules", action='store_true', help='imports all missing modules from DB1 into DB2')
-	parser.add_argument("--merge-messages", action='store_true', help='imports all missing messages from DB1 into DB2')
+	parser.add_argument("--merge-events", action='store_true', help='imports all missing messages from DB1 into DB2')
 	global args
 	args = parser.parse_args()
 	coreutils.init(args)
+
+	# If nothing is specified, assume default set of diffs
+	if not (args.modules or args.contacts or args.events):
+		args.modules = True
+		args.contacts = True
+		args.events = True
 
 	db1 = mirandadb.MirandaDbxMmap(args.dbname1)
 	db2 = mirandadb.MirandaDbxMmap(args.dbname2, writeable=args.write)
@@ -340,9 +342,9 @@ def main():
 
 	if args.events:
 		if not args.contact: # explicitly compare one db.user against another
-			compare_contact_events_print(db1, db2, db1.user, db2.user, merge=args.merge_messages)
+			compare_contact_events_print(db1, db2, db1.user, db2.user, merge=args.merge_events)
 		for (contact1, contact2) in contacts_map['match']:
-			compare_contact_events_print(db1, db2, contact1, contact2, merge=args.merge_messages)
+			compare_contact_events_print(db1, db2, contact1, contact2, merge=args.merge_events)
 
 if __name__ == "__main__":
 	sys.exit(main())

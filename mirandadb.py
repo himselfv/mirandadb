@@ -222,6 +222,28 @@ class DBContact(DBStruct):
 				return setting.value
 		return None
 
+	# MetaContacts
+	def get_meta_parent(self):
+		return self.get_setting("MetaContacts", "ParentMeta")
+	
+	def is_meta(self):
+		return self.protocol=='MetaContacts'
+	
+	def get_meta_child_count(self):
+		return self.get_setting("MetaContacts", "NumContacts")
+	
+	def get_meta_children(self):
+		ret = []
+		module = self.settings["metacontacts"]
+		if module == None: return ret
+		i = 0
+		while True:
+			childId = module.get_setting("Handle"+str(i))
+			if childId == None: break
+			ret.append(childId)
+			i += 1
+		return ret
+
 
 """
 DWORD signature;
@@ -257,6 +279,7 @@ class DBContactSettings(DBStruct):
 			self.moduleName = dbname.name
 		self.settings()
 	
+	# settingName -> value
 	_settings = None
 	def settings(self):
 		if self._settings == None:
@@ -310,6 +333,12 @@ class DBContactSettings(DBStruct):
 			else:
 				raise StopIteration()
 			return self.module._settings.values()[self.idx-1]
+
+	def get_setting(self, settingName, default = None):
+		setting = self[settingName]
+		if setting == None:
+			return default
+		return setting.value
 
 
 class Bytes(str):
@@ -875,6 +904,9 @@ class MirandaDbxMmap(object):
 	# Contacts
 	#
 	
+	def read_contact(self, offset):
+		return self.read(DBContact(), offset)
+	
 	# Returns a list of all DBContact()s
 	_contacts = None
 	def contacts(self):
@@ -925,7 +957,7 @@ class MirandaDbxMmap(object):
 	
 	# Returns the meta contact for the given contact, or None
 	def get_meta_contact(self, contact):
-		metaId = contact.get_setting("MetaContacts", "ParentMeta")
+		metaId = contact.get_meta_parent()
 		return self.contact_by_id(metaId) if metaId <> None else None
 	
 	# Returns the contact which hosts events for this contact - the contact itself or its metacontact.
@@ -1019,6 +1051,7 @@ class MirandaDbxMmap(object):
 		# especially when doing mass deletions.
 		if isinstance(offset, DBEvent):
 			offset = offset.offset
+		log.debug('Deleting event '+str(offset)+'...')
 		# To trust DBEvent() fields we must have some kind of "single-instance events":
 		# cache returned DBEvents and update on the fly, removing only on __del__.
 		# And that might not be wise. What if someone's iterating over them? Safer to just requery on each edit.
@@ -1508,7 +1541,7 @@ def format_event(db, event, data = None):
 		data = ', '.join([ repr(key) + ': ' + repr(value) for (key, value) in data.items()])
 	else:
 		data = unicode(vars(data))
-	return str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
+	return str(event.offset) + " " + str(event.timestamp) + " " + db.get_module_name(event.ofsModuleName) + " " + str(event.eventType) + " " + str(event.flags) + " " + data
 
 
 def add_event(db, args):
