@@ -1019,6 +1019,9 @@ class MirandaDbxMmap(object):
 			insert_after = None
 		elif insert_after < 0:
 			insert_after = self.db.get_last_event(contact)
+		else:
+			# Requery the event! The prev/next in this one can be stale
+			insert_after = self.read_event(insert_after.offset)
 		# Link events together
 		if insert_after == None:
 			if contact.ofsFirstEvent <> 0:
