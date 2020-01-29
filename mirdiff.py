@@ -65,6 +65,38 @@ def compare_contact_lists(contacts1 = None, contacts2 = None):
 			ret['missing2'].remove(contact2)
 	return ret
 
+# Maps DBContacts from list1 to DBContacts from list2:
+# Lists can be from different DBs. Pass DBs instead of lists for better matching.
+#   L1_contact	-> L2_contact / None
+#   None		-> [L2_contact, L2_contact...]
+# ATM only maps by contact ID but don't rely on that.
+def map_contacts(list1, list2):
+	if isinstance(list1, mirandadb.MirandaDbxMmap):
+		list1 = list1.get_contacts()[:]
+	if isinstance(list2, mirandadb.MirandaDbxMmap):
+		list2 = list2.get_contacts()[:]
+	ret = {}
+	ret[None] = []
+	for contact1 in list1:
+		contact2 = contact_by_id(list2, contact1.contactID)
+		ret[contact1] = contact2
+	for contact2 in list2:
+		if not contact2 in ret.values():
+			ret[None].append(contact2)
+	return ret
+
+# Same, but returns ID->ID map
+def map_contact_ids(list1, list2):
+	ret = {}
+	ret[None] = []
+	for contact1 in map_contacts(list1, list2):
+		val = list1[contact1]
+		if contact1 <> None:
+			ret[contact1.contactID] = val.contactID if val <> None else None
+			continue
+		for contact2 in val:
+			ret[None].append(contact2.contactID)
+	return ret
 
 
 """
