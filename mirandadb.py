@@ -1030,6 +1030,7 @@ class MirandaDbxMmap(object):
 			evtNext = self.read_event(insert_after.ofsNext)
 		else:
 			evtNext = None
+			contact.ofsLastEvent = event.offset
 		event.ofsPrev = insert_after.offset if insert_after <> None else 0
 		event.ofsNext = evtNext.offset if evtNext <> None else 0
 		# Write
@@ -1070,7 +1071,9 @@ class MirandaDbxMmap(object):
 			evtPrev = self.read_event(ofsPrev)
 			evtPrev.ofsNext = ofsNext
 			self.write(evtPrev, evtPrev.offset)	# The size shouldn't have changed
-		if ofsNext <> 0:
+		if ofsNext == 0:
+			contact.ofsNextEvent = ofsPrev
+		else:
 			evtNext = self.read_event(ofsNext)
 			evtNext.ofsPrev = ofsPrev
 			self.write(evtNext, evtNext.offset)	# The size shouldn't have changed

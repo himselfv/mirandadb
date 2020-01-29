@@ -63,23 +63,44 @@ def vassert(condition, message):
 		print "WARNING: "+message
 
 class DbVerifier(mirandadb.MirandaDbxMmap):
-	def verify(self):
-		header = self.header
-		self.totalUsed = header.size()
+	def __init__(self, filename):
+		super(DbVerifier, self).__init__(filename)
+		self.init_mem()
+		self.use_memmap = False
+		self.contactIDs = {}
 	
+	def init_mem(self):
+		self.totalUsed = 0
+		self.mem_map = []
+	
+	def reg_mem(self, struct, size = None):
+		if size == None:
+			size = struct.size()
+		offset = struct.offset
+		self.totalUsed += size
+		if not self.use_memmap: return
+		i = 0
+		while i < len(self.mem_map):
+			pair = self.mem_map[i]
+			if pair[0] < offset:
+				vassert(pair[0] + pair[1] <= offset, "Struct "+str(offset)+'~'+str(size)+' conflicts with struct '+str(pair[0])+'~'+str(pair[1]))
+				break
+			i += 1
+		pair = (offset, size)
+		self.mem_map.insert(i, pair)
+	
+	def verify(self):
+		self.init_mem()
+		header = self.header
+		self.reg_mem(header)
+
 		# Header
 		vassert(header.ofsModuleNames <> 0, '0 modules')
 		vassert(header.ofsUser <> 0, 'No self contact')
 		vassert(header.ofsFirstContact <> 0, '0 contacts')
 	
 		# Modules
-		offset = header.ofsModuleNames
-		self.moduleOffsets = []
-		while offset <> 0:
-			self.moduleOffsets.append(offset)
-			module = self.read_module(offset)	# raises on bad offset/signature
-			offset = module.ofsNext
-			self.totalUsed += module.size()
+		self.scan_modules()
 	
 		# Contacts
 		self.verify_contacts()
@@ -90,6 +111,15 @@ class DbVerifier(mirandadb.MirandaDbxMmap):
 		vassert(sizeDiff == 0,
 			'ofsFileEnd:'+str(self.header.ofsFileEnd)+' - TotalUsed:'+str(self.totalUsed)+' != SlackSpace:'+str(self.header.slackSpace)+' (diff='+str(sizeDiff)+')'
 			)
+	
+	def scan_modules(self):
+		offset = self.header.ofsModuleNames
+		self.moduleOffsets = []
+		while offset <> 0:
+			self.moduleOffsets.append(offset)
+			module = self.read_module(offset)	# raises on bad offset/signature
+			offset = module.ofsNext
+			self.reg_mem(module)
 	
 	def verify_contacts(self):
 		contactCount = 0
@@ -106,7 +136,7 @@ class DbVerifier(mirandadb.MirandaDbxMmap):
 		vassert(contactCount == self.header.contactCount, 'header.contactCount ('+str(self.header.contactCount)+') doesn\'t match actual count ('+str(contactCount)+')')
 	
 	def verify_contact(self, contact):
-		self.totalUsed += contact.size()
+		self.reg_mem(contact)
 		prefix = 'Contact #'+str(contact.contactID)+': '
 		
 		# Duplicate IDs
@@ -159,7 +189,7 @@ class DbVerifier(mirandadb.MirandaDbxMmap):
 	def verify_settings(self, offset):
 		while offset <> 0:
 			module = self.read(mirandadb.DBContactSettings(), offset)
-			self.totalUsed += module.size()
+			self.reg_mem(module)
 			prefix = "Settings block "+str(offset)
 			
 			vassert(module.ofsModuleName in self.moduleOffsets, prefix+': ofsModuleName '+str(module.ofsModuleName)+' doesn\'t match any of the known modules')
@@ -172,7 +202,7 @@ class DbVerifier(mirandadb.MirandaDbxMmap):
 		while offset <> 0:
 			eventCount += 1
 			event = self.read_event(offset)
-			self.totalUsed += event.size()
+			self.reg_mem(event)
 			prefix = "Event "+str(offset)
 			
 			vassert(event.ofsPrev == lastOffset, prefix+': ofsPrev='+str(event.ofsPrev)+' doesn\'t match the previous event ('+str(lastOffset)+')')
@@ -202,8 +232,13 @@ class DbVerifier(mirandadb.MirandaDbxMmap):
 
 def verify_db(args):
 	verifier = DbVerifier(args.dbname)
-	verifier.verify()
-
+	verifier.use_memmap = args.memmap
+	if not args.contact:
+		verifier.verify()
+	else:
+		verifier.scan_modules()	# still need this
+		for contact in args.contact:
+			verifier.verify_contact(verifier.contact_by_id(contact))
 
 
 """
@@ -282,6 +317,8 @@ parser.add_argument("--write", help='opens the databases for writing (WARNING: e
 subparsers = parser.add_subparsers(title='subcommands')
 
 sparser = subparsers.add_parser('verify', help='verifies database integrity')
+sparser.add_argument('--contact', type=int, nargs='*', help='verify only these contacts')
+sparser.add_argument('--memmap', action='store_true', help='verify that structures have no overlap in memory')
 sparser.set_defaults(func=verify_db)
 
 sparser = subparsers.add_parser('dump-events', formatter_class=coreutils.SmartFormatter,
