@@ -249,19 +249,23 @@ def find_event_insert_point(db, contact, timestamp, start_event):
 	return start_event
 
 # Imports event evt1 from foreign DB1 to DB2. Returns its offset.
-def import_event(db1, db2, contact2, evt1, insert_after):
-	# Find insert point
-	insert_after = find_event_insert_point(db2, contact2, evt1.timestamp+1, insert_after)
+def import_event(db1, db2, evt1, insert_after):
+	# Determine target contact ID
+	# We would have to map event.contactID -> new_event.contactID,
+	# but thankfully we *match* contacts by IDs atm so they are by definition equal
+	db2_contactID = evt1.contactID
+	# The event needs to be inserted to the host contact which may be a different one
+	host_contact = db2.get_host_contact(db2_contactID)
+	# Find insertion point
+	insert_after = find_event_insert_point(db2, host_contact, evt1.timestamp+1, insert_after)
 	# Convert DB1 event to DB2 event
 	evt2 = copy.copy(evt1)
-	# We would have to map event.contactID -> new_event.contactID,
-	# but thankfully we *match* contacts by IDs so they are by definition equal
-	evt2.contactID = evt1.contactID
+	evt2.contactID = db2_contactID
 	# Module's offset might've changed - this happens in the wild
 	# Note: Preserve the original event module name, even if the contact protocol have changed
 	evt2.ofsModuleName = db2.find_module_name(db1.get_module_name(evt1.ofsModuleName))
 	assert(evt2.ofsModuleName <> None)
-	return db2.add_event(evt2, contact2, insert_after=insert_after)
+	return db2.add_event(evt2, host_contact, insert_after=insert_after)
 	
 
 def print_event_diff(db1, db2, diff):
@@ -289,7 +293,7 @@ def compare_contact_events_print(db1, db2, contact1, contact2, merge=False):
 		print_event_diff(db1, db2, diff)
 		if merge and (diff.db1 <> None):
 			for evt1 in diff.db1:
-				last_db2_event = import_event(db1, db2, contact2, evt1, last_db2_event)
+				last_db2_event = import_event(db1, db2, evt1, last_db2_event)
 		print ""	# Empty line
 
 

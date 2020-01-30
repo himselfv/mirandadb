@@ -1033,7 +1033,8 @@ class MirandaDbxMmap(object):
 		return self.read(DBEvent(), offset)
 	
 	# Adds a new event to the database. Returns new event offset.
-	#	contact: The host contact. Otherwise determined automatically, minding metacontacts.
+	#	contact: Determined automatically, minding metacontacts.
+	#	         Only pass this to add event to non-standard event chain.
 	#	insert_after: Offset of the event to insert this one after.
 	#	  None:	Determine automatically from timestamp
 	#	  0:	First event in the chain
@@ -1076,6 +1077,11 @@ class MirandaDbxMmap(object):
 			self.write(insert_after, insert_after.offset)
 		contact.eventCount += 1
 		self.write(contact, contact.offset)
+		# When updating metacontacts, we must update both the host and the child
+		if contact.contactID <> event.contactID:
+			child_contact = self.contact_by_id(event.contactID)
+			child_contact.eventCount += 1
+			self.write(child_contact, child_contact.offset)
 		self.event_cache_invalidate(contact.contactID)
 		return event.offset
 	
