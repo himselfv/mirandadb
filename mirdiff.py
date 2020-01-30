@@ -32,7 +32,7 @@ def print_modules_diff(db1, db2, diff):
 	missing = [offset for offset in diff.keys() if (offset<>None) and (diff[offset]==None)]
 	new = diff[None]
 	for offset in missing:
-		moduleNane = db1.get_module_name(offset)
+		moduleName = db1.get_module_name(offset)
 		print "--DB2: "+moduleName
 		if args.merge_modules:
 			new_offset = db2.add_module_name(moduleName)
