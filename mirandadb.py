@@ -479,12 +479,12 @@ class DBEvent(DBStruct):
 	DBEF_ENCRYPTED	= 32 # event is encrypted (never reported outside a driver)
 	
 	# Predefined common event types
-	EVENTTYPE_MESSAGE		= 0
-	EVENTTYPE_URL			= 1
-	EVENTTYPE_CONTACTS		= 2				# data = DBContactsBlob [uin, nick]
-	EVENTTYPE_ADDED			= 1000			# data = DBAuthBlob
-	EVENTTYPE_AUTHREQUEST	= 1001			# data = DBAuthBlob
-	EVENTTYPE_FILE			= 1002			# data = DBFileBlob [DWORD, filename, description]
+	EVENTTYPE_MESSAGE		= 0				# MessageBlob
+	EVENTTYPE_URL			= 1				# DBURLBlob
+	EVENTTYPE_CONTACTS		= 2				# DBContactsBlob [uin, nick]
+	EVENTTYPE_ADDED			= 1000			# DBAuthBlob
+	EVENTTYPE_AUTHREQUEST	= 1001			# DBAuthBlob
+	EVENTTYPE_FILE			= 1002			# DBFileBlob [DWORD, filename, description]
 	# Modules define their event types starting with this one:
 	EVENTTYPE_MODULE_START	= 2000
 	
@@ -494,12 +494,12 @@ class DBEvent(DBStruct):
 	#   plugins\NewXstatusNotify\src\xstatus.h
 	#   plugins\TabSRMM\src\msgs.h
 	#   plugins\IEHistory\src\stdafx.h
-	EVENTTYPE_STATUSCHANGE	= 25368
+	EVENTTYPE_STATUSCHANGE	= 25368				# MessageBlob
 	
 	# Well known in two different ways (AVATAR_CHANGE and AVATARCHANGE).
 	# Written by AvatarHistory but under contact's proto:
 	#   ExternalAPI\m_avatarhistory.h
-	EVENTTYPE_AVATAR_CHANGE	= 9003
+	EVENTTYPE_AVATAR_CHANGE	= 9003				# DBAvatarChangeBlob
 	
 	# Produced by plugins\TabSRMM\src\sendqueue.cpp\logError()
 	# Very weird, tries to store its message in "module name" and (optionally) non-sent message in data,
@@ -513,19 +513,19 @@ class DBEvent(DBStruct):
 	#   protocols\JabberG\src\stdafx.h
 	#   plugins\Scriver\src\msgs.h
 	#   plugins\IEView\src\HTMLBuilder.h
-	EVENTTYPE_JABBER_CHATSTATES		= 2000
-	EVENTTYPE_JABBER_PRESENCE		= 2001
+	EVENTTYPE_JABBER_CHATSTATES		= 2000		# DBJabberChatStatesBlob
+	EVENTTYPE_JABBER_PRESENCE		= 2001		# DBJabberPresenceBlob
 
 	# ICQ protocol
 	#   include\m_icq.h
-	#   plugins\NewEventNotify\src\stdafx.h		ICQEVENTTYPE_SMSCONFIRMATION
-	#   plugins\SMS\src\SMSConstans.h			ICQEVENTTYPE_SMSCONFIRMATION
+	#   plugins\NewEventNotify\src\stdafx.h
+	#   plugins\SMS\src\SMSConstans.h
 	# And in a lot of other places
-	ICQEVENTTYPE_SMS				= 2001
-	ICQEVENTTYPE_EMAILEXPRESS		= 2002
-	ICQEVENTTYPE_WEBPAGER			= 2003
-	ICQEVENTTYPE_MISSEDMESSAGE		= 2004
-	ICQEVENTTYPE_SMSCONFIRMATION	= 3001
+	ICQEVENTTYPE_SMS				= 2001		# DBICQSMSBlob
+	ICQEVENTTYPE_EMAILEXPRESS		= 2002		# DBICQEmailExpressBlob
+	ICQEVENTTYPE_WEBPAGER			= 2003		# DBICQWebPagerBlob
+	ICQEVENTTYPE_MISSEDMESSAGE		= 2004		# DBICQMissedMessageBlob
+	ICQEVENTTYPE_SMSCONFIRMATION	= 3001		# DBICQSMSConfirmationBlob
 
 	# WaTrack
 	#   plugins\ExternalAPI\m_music.h
@@ -545,7 +545,7 @@ class DBEvent(DBStruct):
 	
 	# VK
 	#   protocols\VKontakte\src\vk.h
-	VK_USER_DEACTIVATE_ACTION		= 9321
+	VK_USER_DEACTIVATE_ACTION		= 9321		# DBVKontakteUserDeactivateActionBlob
 
 	# SkypeWeb
 	#  protocols\SkypeWeb\src\skype_db.h
