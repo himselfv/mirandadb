@@ -658,6 +658,22 @@ class DBURLBlob(DBEventBlob):
 		self.url = self.read_str(file)
 		self.desc = self.try_read_str(file)
 
+class DBContactsBlob(DBEventBlob):
+	# Any number of nick:string\0 address:string\0 sequences, where `address` is protocol-specific
+	#   ContactsPlus\src\send.cpp
+	#   IcqOscarJ\src\icq_proto.cpp\RecvContacts()
+	#   MSN\src\msn_proto.cpp\RecvContacts()
+	#   MRA\src\MraProto.cpp\RecvContacts()
+	#   src\skype_proto.cpp\RecvContacts()
+	def read(self, file):
+		super(DBURLBlob, self).read(file)
+		self.contacts = []
+		while True:
+			nick = self.try_read_str(file)
+			if nick <> None:
+				address = self.read_str(file)
+			self.contacts.append((nick, address))
+
 class DBAuthBlob(DBEventBlob):
 	#"Contact added"
 	#[uin:DWORD; hContact:DWORD; nick, firstName, lastName, email: str]
@@ -713,6 +729,17 @@ class DBICQMissedMessageBlob(DBEventBlob):
 	ICQ_REJECTED_FLOOD			= 2	# The sender has flooded the server.
 	ICQ_REJECTED_TOO_EVIL		= 4	# You are too evil.
 	# Other codes are not entirely impossible
+	reason_text = {
+		ICQ_REJECTED_BLOCKED: 'The message was invalid.',
+		ICQ_REJECTED_TOO_LONG: 'The message was too long.',
+		ICQ_REJECTED_FLOOD: 'The sender has flooded the server.',
+		ICQ_REJECTED_TOO_EVIL: 'You are too evil.',
+	}
+	def format_text(self):
+		if self.reason in self.reason_text:
+			return self.reason_text[self.reason]
+		else:
+			return 'Message rejected (ICQ reason code: '+str(self.reason)+')'
 	FORMAT = "=H"
 	def unpack(self, tuple):
 		(self.reason,			# Purpose unknown, typically == 0
@@ -771,10 +798,13 @@ class DBJabberChatStatesBlob(DBEventBlob):
 		(self.state,
 		) = tuple
 
-class DBVKontakteUserDeactivateActionBlob:
+class DBVKontakteUserDeactivateActionBlob(DBEventBlob):
 	# Contains a single localized UTF8 string with a description of one of three events:
 	#  1. Restored control of their page, 2. Deactivated (deleted), 3. Deactivated (banned)
 	# vkontakte\src\misc.cpp
+	DESC_RESTORED_CONTROL = 'Restored control of their page'
+	DESC_DEACTIVATED = 'Deactivated (deleted)'
+	DESC_BANNED = 'Deactivated (banned)'
 	def read(self, file):
 		super(DBVKontakteUserDeactivateActionBlob, self).read(file)
 		self.description = self.read_str(file)
@@ -1208,6 +1238,8 @@ class MirandaDbxMmap(object):
 			ret = self.decode_event_data_string(event, _unicode)
 		elif event.eventType==event.EVENTTYPE_URL:
 			ret = DBURLBlob(event.blob, _unicode)
+		elif event.eventType==event.EVENTTYPE_CONTACTS:
+			ret = DBContactsBlob(event.blob, _unicode)
 		elif event.eventType==event.EVENTTYPE_ADDED:
 			ret = DBAuthBlob(event.blob, _unicode)
 		elif event.eventType==event.EVENTTYPE_AUTHREQUEST:
@@ -1216,7 +1248,10 @@ class MirandaDbxMmap(object):
 			ret = DBFileBlob(event.blob, _unicode)
 		elif event.eventType==event.EVENTTYPE_STATUSCHANGE:
 			# Both NewXStatusNotify and TabSRMM produce this as UTF8 DBEF_UTF
-			# The text is freeform and expects adding nickname at the beginning.
+			# The text is freeform and expects adding nickname at the beginning:
+			#	"signed off."
+			#	"signed on and is now %s."
+			#	"changed status from %s to %s."
 			ret = self.decode_event_data_string(event, _unicode)
 		elif event.eventType==event.EVENTTYPE_AVATAR_CHANGE:
 			ret = DBAvatarChangeBlob(event.blob, _unicode)
@@ -1235,7 +1270,7 @@ class MirandaDbxMmap(object):
 		elif (proto=='JABBER') and (event.eventType==event.EVENTTYPE_JABBER_CHATSTATES):
 			ret = DBJabberChatStatesBlob(event.blob)
 		elif (proto=='VKontakte') and (event.eventType==event.VK_USER_DEACTIVATE_ACTION):
-			ret = DBVKontakteUserDeactivateActionBlob
+			ret = DBVKontakteUserDeactivateActionBlob(event.blob)
 		else:
 			ret = MessageBlob(
 				type = 'unsupported',
