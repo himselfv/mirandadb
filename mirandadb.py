@@ -966,15 +966,7 @@ class MirandaDbxMmap(object):
 			contact.display_name = u'#'+unicode(contact.contactID);
 		if contact.protocol <> None:
 			contact.display_name = contact.protocol + u'\\' + contact.display_name
-		# Guess stable ID for some common protocols
-		if contact.protocol <> None:
-			contact.id = contact.get_setting(contact.protocol, "jid")		# xmpp
-			if contact.id == None:
-				contact.id = contact.get_setting(contact.protocol, "uin")	# ICQ
-			if contact.id == None:
-				contact.id = contact.get_setting(contact.protocol, "id")	# vkontakte
-		else:
-			contact.id = None
+		contact.uin = self.contact_UIN(contact)
 	
 	# Returns a contact by its database contactID
 	def contact_by_id(self, id):
@@ -1013,10 +1005,10 @@ class MirandaDbxMmap(object):
 			if contact.display_name and fnmatch.fnmatch(contact.display_name.lower(), contact_mask):
 				ret.append(contact)
 				continue
-			if contact.id and fnmatch.fnmatch(str(contact.id).lower(), contact_mask):
+			if contact.uin and fnmatch.fnmatch(str(contact.uin).lower(), contact_mask):
 				ret.append(contact)
 				continue
-			if contact.id and fnmatch.fnmatch((contact.protocol+u'\\'+str(contact.id)).lower(), contact_mask):
+			if contact.uin and fnmatch.fnmatch((contact.protocol+u'\\'+str(contact.uin)).lower(), contact_mask):
 				ret.append(contact)
 				continue
 			if '#'+str(contact.contactID) == contact_mask:
@@ -1025,6 +1017,46 @@ class MirandaDbxMmap(object):
 		log.warning('entries: '+str(len(ret)))
 		return ret
 
+
+	# Different protocols use different IDs (UINs, JIDs, Skype/Telegram IDs and so on)
+	# We will refer to these as UINs to differentiate from contactIDs
+	
+	# Returns the protocol-dependent UIN for the contact, or None
+	def contact_UIN(self, contact):
+		if contact.protocol == None:
+			return None
+		contact.id = contact.get_setting(contact.protocol, "jid")		# xmpp
+		if contact.id == None:
+			contact.id = contact.get_setting(contact.protocol, "uin")	# ICQ
+		if contact.id == None:
+			contact.id = contact.get_setting(contact.protocol, "id")	# vkontakte
+
+	# Returns the "uri:UIN" scheme URI for the contact
+	def contact_URI(self, contact = None, proto = None):
+		if isinstance(contact, DBContact):
+			if proto == None:
+				proto = contact.protocol
+			uin = self.contact_UIN(self, contact)
+		else:
+			assert proto <> None
+			uin = contact
+		if (uin == None) or (proto == None):
+			return None
+		base_proto = self.get_base_proto(contact.protocol).lower()
+		if base_proto == None:
+			return None
+		scheme = self.proto_uri_scheme(base_proto)
+		if scheme == None:
+			return None
+		return scheme+':'+uin
+
+	def proto_uri_scheme(self, base_proto):
+		if base_proto=='jabber':	return 'xmpp'
+		if base_proto=='icq':		return 'icq'
+		if base_proto=='irc':		return 'irc'
+		if base_proto=='telegram':	return 'telegram'
+		if base_proto=='skype':		return 'skype'
+		return None
 
 	#
 	# Events
@@ -1486,7 +1518,7 @@ def dump_contacts(db, args):
 			continue
 		print unicode(contact.display_name)
 		print u"  Protocol: "+unicode(contact.protocol)
-		print u"  ID: "+unicode(contact.id)
+		print u"  UIN: "+unicode(contact.uin)
 		print u"  Contact ID: #"+unicode(contact.contactID)
 		print u"  Nick: "+unicode(contact.nick)
 		print u"  MyHandle: "+unicode(contact.get_setting('CList', 'MyHandle'))
