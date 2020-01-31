@@ -1032,6 +1032,8 @@ class MirandaDbxMmap(object):
 			contact.id = contact.get_setting(contact.protocol, "id")	# vkontakte
 
 	# Returns the "uri:UIN" scheme URI for the contact
+	#   contact: DBContact() or any sort of proto-specific UIN
+	#   proto:   None (taken from DBContact) or module name, or module offset
 	def contact_URI(self, contact = None, proto = None):
 		if isinstance(contact, DBContact):
 			if proto == None:
@@ -1042,13 +1044,13 @@ class MirandaDbxMmap(object):
 			uin = contact
 		if (uin == None) or (proto == None):
 			return None
-		base_proto = self.get_base_proto(contact.protocol).lower()
+		base_proto = self.get_base_proto(proto).lower()
 		if base_proto == None:
 			return None
 		scheme = self.proto_uri_scheme(base_proto)
 		if scheme == None:
 			return None
-		return scheme+':'+uin
+		return scheme+':'+str(uin)
 
 	def proto_uri_scheme(self, base_proto):
 		if base_proto=='jabber':	return 'xmpp'
