@@ -50,6 +50,8 @@ DBHeader
 # If self.SIGNATURE is present, its going to be compared to self.signature.
 # If self.FIELDS is present, .pack()/.unpack() will be auto-generated
 #
+class SignatureError(Exception):
+	pass
 class DBStruct(object):
 	def read(self, file):
 		self.offset = file.tell()	# store offset to help track the origin
@@ -65,7 +67,7 @@ class DBStruct(object):
 				self.unpack(_tuple)
 		if hasattr(self, 'SIGNATURE'):
 			if self.signature <> self.SIGNATURE:
-				raise Exception(type(self).__name__+': expected signature '+str(self.SIGNATURE)+', found '+str(self.signature))
+				raise SignatureError(type(self).__name__+': expected signature '+str(self.SIGNATURE)+', found '+str(self.signature))
 	def write(self, file, offset=None):
 		if offset <> None:
 			file.seek(offset, 0)
