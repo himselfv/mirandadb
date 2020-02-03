@@ -85,7 +85,7 @@ def main():
 	for contact in mirandadb.select_contacts_opt(db, args.contact):
 		bookmarks = hpp_get_bookmarks(db, contact)
 		if len(bookmarks) <= 0: continue
-		print contact.display_name+':'
+		print contact.display_name+' ('+str(contact.contactID)+'):'
 		for bookmark in bookmarks:
 			log.debug("Reading bookmark at "+str(bookmark.eventHandle))
 			event = hpp_find_event(db, contact, bookmark)
