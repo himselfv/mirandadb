@@ -236,7 +236,7 @@ class DBContact(DBStruct):
 	
 	def get_meta_children(self):
 		ret = []
-		module = self.settings["metacontacts"]
+		module = self.settings.get("metacontacts", None)
 		if module == None: return ret
 		i = 0
 		while True:

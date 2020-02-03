@@ -20,24 +20,14 @@ class HPPBookmarksHeader(mirandadb.DBStruct):
 class HPPBookmarkData(mirandadb.DBStruct):
 	FORMAT = "=III"
 	FIELDS = [
-		'eventHandle',
+		'eventOffset',
 		'CRC32',
 		'timestamp'
 	]
 	SIZE = 3*4
 
-# Retrieves all bookmark structures for the contact, minding MetaContacts
-def hpp_get_bookmarks(db, contact):
-	bookmarks = hpp_read_bookmarks(db, contact)
-	if contact.is_meta():
-		for child_id in contact.get_meta_children():
-			child = db.contact_by_id(child_id)
-			if not child: continue
-			bookmarks += hpp_read_bookmarks(db, child)
-	return bookmarks
-
-# Reads and parses bookmark structures for one contact
-def hpp_read_bookmarks(db, contact):
+# Reads and parses bookmark structures for one DBContact entry
+def read_bookmarks(db, contact):
 	blob = contact.get_setting("HistoryPlusPlus", "Bookmarks", [])
 	if not blob:
 		return []
@@ -60,14 +50,48 @@ def hpp_read_bookmarks(db, contact):
 		bookmarks += [bookmark]
 	return bookmarks
 
+# Adds new bookmarks to bookmarks, skipping duplicates
+def merge(bookmarks, new_bookmarks):
+	# For now simply adds them together
+	bookmarks += new_bookmarks
+	return bookmarks
+
+"""
+MetaContacts creates confusion. Child events can be stored:
+ - In child contacts
+ - In metas (while keeping their contactID==child)
+Bookmarks add to this confusion:
+ - Bookmarks may be stored in child contacts (even if child events are in meta)
+ - Bookmarks may be stored in metas (even if child events are in children)
+ - Meta may have duplicate child events
+ - Duplicate events may have different eventOffsets (either Meta or Child copies may be correct, or both incorrect)
+ - Bookmarked CRCs could have changed on database imports.
+
+Therefore:
+1. For raw access, read DBContact() bookmarks directly with read_bookmarks().
+2. For meta contacts, get_bookmarks() returns an amalgamation of meta bookmarks and all child bookmarks:
+3. For child contacts, get_bookmarks() returns all bookmarks from the child, plus all bookmarks from its meta host only (no sibling contacts)
+"""
+
+# Retrieves all bookmark structures for the logical contact, minding MetaContacts
+def get_bookmarks(db, contact):
+	bookmarks = read_bookmarks(db, contact)
+	if contact.is_meta():
+		for child_id in contact.get_meta_children():
+			child = db.contact_by_id(child_id)
+			if not child: continue
+			merge(bookmarks, read_bookmarks(db, child))
+	return bookmarks
+
 # Locates the bookmarked event or the best fit, if the event itself is unavailable.
 # May return None if the bookmarked event cannot be located. This is regrettable but should be handled gracefully.
-def hpp_find_event(db, contact, bookmark):
+def find_event(db, contact, bookmark):
 	try:
-		event = db.read_event(bookmark.eventHandle)
+		event = db.read_event(bookmark.eventOffset)
 		return event
 	except mirandadb.SignatureError:
 		pass
+	print "Could not find event directly, looking up by timestamp"
 	# Find the event by timestamp. HPP also selects by CRC but whatever
 	return db.last_event_before_timestamp(contact, bookmark.timestamp+1)
 
@@ -83,12 +107,12 @@ def main():
 	db = mirandadb.MirandaDbxMmap(args.dbname)
 	
 	for contact in mirandadb.select_contacts_opt(db, args.contact):
-		bookmarks = hpp_get_bookmarks(db, contact)
+		bookmarks = get_bookmarks(db, contact)
 		if len(bookmarks) <= 0: continue
 		print contact.display_name+' ('+str(contact.contactID)+'):'
 		for bookmark in bookmarks:
-			log.debug("Reading bookmark at "+str(bookmark.eventHandle))
-			event = hpp_find_event(db, contact, bookmark)
+			log.debug("Reading bookmark at "+str(bookmark.eventOffset))
+			event = find_event(db, contact, bookmark)
 			if not event:
 				print '[Lost event with timestamp '+str(bookmark.timestamp)+']'
 			else:
