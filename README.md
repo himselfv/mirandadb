@@ -1,5 +1,3 @@
-Miranda / Miranda NG dbx_mmap database reader/writer
-
 Reads and partially writes Miranda / Miranda NG dbx_mmap databases ("home.dat").
 
 Command-line quickstart:
