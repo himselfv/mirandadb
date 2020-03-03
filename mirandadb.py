@@ -1431,7 +1431,7 @@ def main():
 	sparser.add_argument('--low', action='store_true', help='print low-level info')
 	sparser.set_defaults(func=dump_modules)
 	
-	sparser = subparsers.add_parser('add-module', help='add-module')
+	sparser = subparsers.add_parser('add-module', help='adds a new module to the database')
 	sparser.add_argument('module-name', type=str, nargs='+', help='add module with this name')
 	sparser.set_defaults(func=add_module)
 	
