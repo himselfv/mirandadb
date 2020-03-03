@@ -1,16 +1,17 @@
 Miranda / Miranda NG dbx_mmap database reader/writer
+
 Reads and partially writes Miranda / Miranda NG dbx_mmap databases ("home.dat").
 
-Can be used programmatically or from command-line.
-
 Command-line quickstart:
-  [*.py] --help
+
+    ***.py --help
 
 Programmatic quickstart:
-  import mirandadb
-  db = mirandadb.MirandaDbxMmap(filename)
-  db.contacts()
-  db.events()
+
+    import mirandadb
+    db = mirandadb.MirandaDbxMmap(filename)
+    db.contacts()
+    db.events()
 
 See dbx_mmap format quick intro below.
 
@@ -50,16 +51,15 @@ Note: Does not diff settings currently, mirevo.py is sufficient for that.
 ### mirevo.py
 Loads all matching database snapshots one by one and traces data evolution through it.
 
-When you have a lot of backups (home-2018, home-2019, home-2020), this will trace how all contacts and configuration settings have changed with time.
-For instance how the contact information has changed with years.
+When you have a lot of backups (home-2018, home-2019, home-2020), this will trace how all contacts, contact details and configuration settings have changed over time. (For example how the contact nickname has changed)
 
 
 ### mirrestore.py
-Scans the database and tries to find events/messages which might be corrupted (do not look like valid events).
+Scans the database and tries to find events/messages that might be corrupted (do not look like valid events). Removes new unexpected messages from the older data (usually the corrupted versions of existing messages).
 
 
 ## How to use to restore the database
-As an example, let's fix some database corruption. Say you have an older snapshot with events until 2019.01 and current database from 2020.01, and in the meanwhile you've received some new messages but also some older messages became corrupt.
+As an example, let's fix some database corruption. Say you have an older snapshot with events until 2019.01 and current database from 2020.01, and in the meanwhile you've received some new messages but also some older messages became corrupted.
 
 Use mirrestore.py --delete-extra to delete all messages from the newer database which are not found in the older database AND are not simply newer by date (in other words, corrupted versions of older messages).
 
